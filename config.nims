@@ -9,24 +9,25 @@ when defined(macosx):
     switch("passL", "-arch x86_64")
 
 # Chronicles logging configuration
-# Log level: DEBUG, INFO, WARN, ERROR, FATAL
+# Log level: TRACE, DEBUG, INFO, NOTICE, WARN, ERROR, FATAL
 # switch("define", "chronicles_log_level=INFO")
 
-# Output to both console and file
-switch("define", "chronicles_sinks=textlines[stdout],textlines[file]")
+# Output to stdout (console)
+# switch("define", "chronicles_sinks=textlines[stdout]")
 
-# Enable file rotation - max 5 files, 10MB each
-switch("define", "chronicles_rotate=5")
-switch("define", "chronicles_max_size=10485760")  # 10MB
+# For file logging, use:
+  switch("define", "chronicles_sinks=textlines[file]")
+#   switch("define", "chronicles_file=path/to/nimclaw.log")
+#
+# Or for both console and file:
+#   switch("define", "chronicles_sinks=textlines[stdout],textlines[file]")
+#
+# Log rotation is handled by external tools like logrotate on Linux,
+# or use the nimclaw built-in rotation by setting chronicles_file to a
+# date-based path at startup.
 
-# Disable thread ID in log output for cleaner console output
-switch("define", "chronicles_thread_ids=no")
-
-# Enable timestamps
+# Timestamp format: RfcTime, RfcUtcTime, UnixTime, or NoTimestamps
 switch("define", "chronicles_timestamps=RfcTime")
 
-# File output directory is set at runtime via the LOG_DIR env variable
-# or defaults to OS-specific location:
-#   Windows: %APPDATA%/nimclaw/logs/
-#   macOS: ~/Library/Logs/nimclaw/
-#   Linux: ~/.local/share/nimclaw/logs/ or $XDG_DATA_HOME/nimclaw/logs/
+# Disable thread ID in log output
+switch("define", "chronicles_thread_ids=no")

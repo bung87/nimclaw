@@ -62,13 +62,13 @@ proc getAccessToken(c: QQChannel) {.async.} =
     let res = parseJson(body)
     if res.hasKey("access_token"):
       c.token = res["access_token"].getStr()
-      info( "Obtained QQ access token", topic = "qq")
+      info "Obtained QQ access token", topic = "qq"
     else:
-      error( "Failed to get access token", topic = "qq", response = body)
+      error "Failed to get access token", topic = "qq", response = body
   except CatchableError as e:
     if not isNil(response):
       await response.closeWait()
-    error("Auth error", topic = "qq", error = e.msg)
+    error "Auth error", topic = "qq", error = e.msg
 
 proc qqGatewayLoop(c: QQChannel) {.async.} =
   while c.running:
@@ -112,18 +112,18 @@ proc qqGatewayLoop(c: QQChannel) {.async.} =
           let content = d["content"].getStr()
           let chatID = if t == "C2C_MESSAGE_CREATE": senderID else: d["group_id"].getStr()
 
-          info("Received message", topic = "qq", `type` = t, sender = senderID)
+          info "Received message", topic = "qq", `type` = t, sender = senderID
           c.handleMessage(senderID, chatID, content)
 
     except CatchableError as e:
-      error("Gateway error", topic = "qq", error = e.msg)
+      error "Gateway error", topic = "qq", error = e.msg
       await sleepAsync(5000)
 
 method name*(c: QQChannel): string = "qq"
 
 method start*(c: QQChannel) {.async.} =
   if c.appID == "" or c.appSecret == "": return
-  info("Starting QQ Bot channel...", topic = "qq")
+  info "Starting QQ Bot channel...", topic = "qq"
   await c.getAccessToken()
 
   var headers: seq[HttpHeaderTuple] = @[
@@ -133,7 +133,7 @@ method start*(c: QQChannel) {.async.} =
   let url = "https://api.sgroup.qq.com/gateway/bot"
   let addressRes = c.session.getAddress(url)
   if addressRes.isErr:
-    error("Failed to resolve gateway URL", topic = "qq")
+    error "Failed to resolve gateway URL", topic = "qq"
     return
   let address = addressRes.get()
   
@@ -165,11 +165,11 @@ method start*(c: QQChannel) {.async.} =
       c.ws = await WebSocket.connect(wsHost, wsPath, secure = wsUrl.startsWith("wss"))
       c.running = true
       discard qqGatewayLoop(c)
-      info("QQ bot connected", topic = "qq")
+      info "QQ bot connected", topic = "qq"
   except CatchableError as e:
     if not isNil(response):
       await response.closeWait()
-    error("Connection failed", topic = "qq", error = e.msg)
+    error "Connection failed", topic = "qq", error = e.msg
 
 method stop*(c: QQChannel) {.async.} =
   c.running = false
@@ -215,10 +215,10 @@ method send*(c: QQChannel, msg: OutboundMessage) {.async.} =
     await resp.closeWait()
     resp = nil
     if status != 200:
-      error("Send failed", topic = "qq", status = $status, response = cast[string](bodyBytes))
+      error "Send failed", topic = "qq", status = $status, response = cast[string](bodyBytes)
   except CatchableError as e:
     if not isNil(resp):
       await resp.closeWait()
-    error("Send error", topic = "qq", error = e.msg)
+    error "Send error", topic = "qq", error = e.msg
 
 method isRunning*(c: QQChannel): bool = c.running

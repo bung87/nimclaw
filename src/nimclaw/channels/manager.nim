@@ -20,7 +20,7 @@ proc newManager*(cfg: Config, messageBus: MessageBus): Manager =
   )
 
 proc initChannels*(m: Manager) =
-  info( "Initializing channel manager", topic = "channels")
+  info "Initializing channel manager", topic = "channels"
 
   if m.config.channels.telegram.enabled and m.config.channels.telegram.token != "":
     m.channels["telegram"] = newTelegramChannel(m.config.channels.telegram, m.bus)
@@ -43,10 +43,10 @@ proc initChannels*(m: Manager) =
   if m.config.channels.qq.enabled:
     m.channels["qq"] = newQQChannel(m.config.channels.qq, m.bus)
 
-  info("Channel initialization completed", topic = "channels", enabled_channels = $m.channels.len)
+  info "Channel initialization completed", topic = "channels", enabled_channels = $m.channels.len
 
 proc dispatchOutbound(m: Manager) {.async.} =
-  info("Outbound dispatcher started", topic = "channels")
+  info "Outbound dispatcher started", topic = "channels"
   while m.running:
     let msg = await m.bus.subscribeOutbound()
     if m.channels.hasKey(msg.channel):
@@ -54,33 +54,33 @@ proc dispatchOutbound(m: Manager) {.async.} =
       try:
         await channel.send(msg)
       except CatchableError as e:
-        error( "Error sending message to channel", topic = "channels", channel = msg.channel, error = e.msg)
+        error "Error sending message to channel", topic = "channels", channel = msg.channel, error = e.msg
     else:
-      warn( "Unknown channel for outbound message", topic = "channels", channel = msg.channel)
+      warn "Unknown channel for outbound message", topic = "channels", channel = msg.channel
 
 proc startAll*(m: Manager) {.async.} =
   if m.channels.len == 0:
-    warn("No channels enabled", topic = "channels")
+    warn "No channels enabled", topic = "channels"
     return
 
   m.running = true
   discard dispatchOutbound(m)
 
   for name, channel in m.channels:
-    info("Starting channel", topic = "channels", channel = name)
+    info "Starting channel", topic = "channels", channel = name
     try:
       await channel.start()
     except CatchableError as e:
-      error("Failed to start channel", topic = "channels", channel = name, error = e.msg)
+      error "Failed to start channel", topic = "channels", channel = name, error = e.msg
 
 proc stopAll*(m: Manager) {.async.} =
   m.running = false
   for name, channel in m.channels:
-    info("Stopping channel", topic = "channels", channel = name)
+    info "Stopping channel", topic = "channels", channel = name
     try:
       await channel.stop()
     except CatchableError as e:
-      error("Error stopping channel", topic = "channels", channel = name, error = e.msg)
+      error "Error stopping channel", topic = "channels", channel = name, error = e.msg
 
 proc getEnabledChannels*(m: Manager): seq[string] =
   for k in m.channels.keys: result.add(k)

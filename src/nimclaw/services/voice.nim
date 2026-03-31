@@ -25,7 +25,7 @@ proc isAvailable*(t: GroqTranscriber): bool =
   t.apiKey != ""
 
 proc transcribe*(t: GroqTranscriber, audioFilePath: string): Future[TranscriptionResponse] {.async.} =
-  info( "Starting transcription", topic = "voice", audio_file = audioFilePath)
+  info "Starting transcription", topic = "voice", audio_file = audioFilePath
 
   if not fileExists(audioFilePath):
     raise newException(IOError, "Audio file not found")
@@ -71,9 +71,9 @@ proc transcribe*(t: GroqTranscriber, audioFilePath: string): Future[Transcriptio
   let respBody = cast[string](respBytes)
 
   if response.status != 200:
-    error( "API error", topic = "voice", status = $response.status, response = respBody)
+    error "API error", topic = "voice", status = $response.status, response = respBody
     raise newException(IOError, "API error: " & respBody)
 
   let result = parseJson(respBody).to(TranscriptionResponse)
-  info("Transcription completed successfully", topic = "voice", text_length = $result.text.len)
+  info "Transcription completed successfully", topic = "voice", text_length = $result.text.len
   return result

@@ -61,11 +61,11 @@ proc getDefinitions*(r: ToolRegistry): seq[ToolDefinition] {.raises: [].} =
     result.add(toolToSchema(tool))
 
 proc executeWithContext*(r: ToolRegistry, name: string, args: Table[string, JsonNode], channel, chatID: string): Future[string] {.async.} =
-  info("Tool execution started", topic = "tool", tool = name, args = $args)
+  info "Tool execution started", topic = "tool", tool = name, args = $args
 
   let (tool, ok) = r.get(name)
   if not ok:
-    error("Tool not found", topic = "tool", tool = name)
+    error "Tool not found", topic = "tool", tool = name
     return "Error: tool '" & name & "' not found"
 
   if tool of ContextualTool and channel != "" and chatID != "":
@@ -80,9 +80,9 @@ proc executeWithContext*(r: ToolRegistry, name: string, args: Table[string, Json
     result = await tool.execute(args)
   except CatchableError as e:
     let duration = (now() - start).inMilliseconds
-    error("Tool execution failed", topic = "tool", tool = name, duration = $duration, error = e.msg)
+    error "Tool execution failed", topic = "tool", tool = name, duration = $duration, error = e.msg
     return "Error: " & e.msg
 
   let duration = (now() - start).inMilliseconds
-  info("Tool execution completed", topic = "tool", tool = name, duration_ms = $duration, result_length = $result.len)
+  info "Tool execution completed", topic = "tool", tool = name, duration_ms = $duration, result_length = $result.len
   return result

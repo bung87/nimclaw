@@ -60,14 +60,14 @@ proc handleClient(c: MaixCamChannel, transp: StreamTransport) {.async.} =
         c.handleMessage("maixcam", "default", content, @[], metadata)
 
       of "heartbeat":
-        debug( "Received heartbeat", topic = "maixcam")
+        debug "Received heartbeat", topic = "maixcam"
       of "status":
-        info( "Status update from MaixCam", topic = "maixcam", status = $msg["data"])
+        info "Status update from MaixCam", topic = "maixcam", status = $msg["data"]
       else:
-        warn( "Unknown message type", topic = "maixcam", `type` = msgType)
+        warn "Unknown message type", topic = "maixcam", `type` = msgType
 
     except CatchableError as e:
-      error( "Failed to handle client", topic = "maixcam", error = e.msg)
+      error "Failed to handle client", topic = "maixcam", error = e.msg
       break
 
   acquire(c.lock)
@@ -87,15 +87,15 @@ proc onAccept(server: StreamServer, transp: StreamTransport) {.async.} =
   discard handleClient(c, transp)
 
 method start*(c: MaixCamChannel) {.async.} =
-  info("Starting MaixCam channel server", topic = "maixcam")
+  info "Starting MaixCam channel server", topic = "maixcam"
   try:
     let address = initTAddress(c.host, c.port)
     c.server = createStreamServer(address, onAccept, {ReuseAddr}, udata = cast[pointer](c))
     c.server.start()
     c.running = true
-    info("MaixCam server listening", topic = "maixcam", host = c.host, port = $c.port)
+    info "MaixCam server listening", topic = "maixcam", host = c.host, port = $c.port
   except CatchableError as e:
-    error("Failed to start MaixCam server", topic = "maixcam", error = e.msg)
+    error "Failed to start MaixCam server", topic = "maixcam", error = e.msg
 
 method stop*(c: MaixCamChannel) {.async.} =
   c.running = false

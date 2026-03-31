@@ -51,23 +51,23 @@ proc dingtalkGatewayLoop(c: DingTalkChannel) {.async.} =
         c.sessionWebhooks[chatID] = dataModel["sessionWebhook"].getStr()
         release(c.lock)
 
-        info( "Received message", topic = "dingtalk", sender = senderID)
+        info "Received message", topic = "dingtalk", sender = senderID
         c.handleMessage(senderID, chatID, content)
     except CatchableError as e:
-      error( "Gateway error", topic = "dingtalk", error = e.msg)
+      error "Gateway error", topic = "dingtalk", error = e.msg
       await sleepAsync(5000)
 
 method name*(c: DingTalkChannel): string = "dingtalk"
 
 method start*(c: DingTalkChannel) {.async.} =
   if c.clientID == "" or c.clientSecret == "": return
-  info("Starting DingTalk channel...", topic = "dingtalk")
+  info "Starting DingTalk channel...", topic = "dingtalk"
 
   # In a real implementation, we would perform OAuth and then connect to DingTalk's Stream Gateway.
   # Here we provide the structure to support it.
   c.running = true
   discard dingtalkGatewayLoop(c)
-  info("DingTalk channel started", topic = "dingtalk")
+  info "DingTalk channel started", topic = "dingtalk"
 
 method stop*(c: DingTalkChannel) {.async.} =
   c.running = false
@@ -89,7 +89,7 @@ method send*(c: DingTalkChannel, msg: OutboundMessage) {.async.} =
 
   if webhook == "":
     # Fallback to general DingTalk Bot API if session webhook is missing
-    error("No session webhook for chat", topic = "dingtalk", chat_id = msg.chat_id)
+    error "No session webhook for chat", topic = "dingtalk", chat_id = msg.chat_id
     return
 
   var headers: seq[HttpHeaderTuple] = @[
@@ -125,10 +125,10 @@ method send*(c: DingTalkChannel, msg: OutboundMessage) {.async.} =
     await resp.closeWait()
     resp = nil
     if status != 200:
-      error("Send failed", topic = "dingtalk", status = $status, response = cast[string](bodyBytes))
+      error "Send failed", topic = "dingtalk", status = $status, response = cast[string](bodyBytes)
   except CatchableError as e:
     if not isNil(resp):
       await resp.closeWait()
-    error("Send error", topic = "dingtalk", error = e.msg)
+    error "Send error", topic = "dingtalk", error = e.msg
 
 method isRunning*(c: DingTalkChannel): bool = c.running
