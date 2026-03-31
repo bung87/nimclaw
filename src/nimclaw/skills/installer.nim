@@ -1,4 +1,4 @@
-import std/[os, strutils, httpclient, json, uri]
+import std/[os, strutils, httpclient, json, uri, sequtils]
 
 type
   SkillInstaller* = ref object
@@ -37,57 +37,64 @@ proc rawGet(url: string): string =
   finally:
     client.close()
 
-proc findSkillFile(owner, repo, path, branch: string): tuple[url, format: string] =
-  ## Check if SKILL.md or README.md exists at the given path
-  let apiUrl = "https://api.github.com/repos/" & owner & "/" & repo & "/contents/" & path & "?ref=" & branch
-  
-  try:
-    let data = apiGet(apiUrl)
-    if data.kind == JArray:
-      # It's a directory - look for files
-      for item in data:
-        if item["type"].getStr() == "file":
-          let name = item["name"].getStr().toLowerAscii
-          if name == "skill.md":
-            return (item["download_url"].getStr(), "skill_md")
-          if name == "readme.md":
-            return (item["download_url"].getStr(), "readme")
-    elif data.kind == JObject and data["type"].getStr() == "file":
-      # Single file
-      return (data["download_url"].getStr(), "skill_md")
-  except:
-    discard
-  
-  raise newException(IOError, "No SKILL.md or README.md found")
-
 proc getDefaultBranch(owner, repo: string): string =
-  ## Get the default branch (main or master)
   try:
     let data = apiGet("https://api.github.com/repos/" & owner & "/" & repo)
     return data["default_branch"].getStr("main")
   except:
     return "main"
 
-proc listSubdirs(owner, repo, branch: string): seq[string] =
-  ## List subdirectories in repo root
+proc listDirectoryContents(owner, repo, path, branch: string): seq[tuple[name, typeName, url: string]] =
+  ## List contents of a directory via GitHub API
   result = @[]
+  let apiPath = if path != "": "/" & encodeUrl(path, true) else: ""
+  let url = "https://api.github.com/repos/" & owner & "/" & repo & "/contents" & apiPath & "?ref=" & branch
+  
   try:
-    let data = apiGet("https://api.github.com/repos/" & owner & "/" & repo & "/contents?ref=" & branch)
+    let data = apiGet(url)
     if data.kind == JArray:
       for item in data:
-        if item["type"].getStr() == "dir":
-          let name = item["name"].getStr()
-          # Skip common non-skill directories
-          if name notin [".git", ".github", ".docs", ".claude-plugin", 
-                        "scripts", "tests", "docs", ".gitattributes", 
-                        ".gitignore", "validate_plugins.py", "CONTRIBUTING.md", "LICENSE"]:
-            result.add(name)
+        result.add((
+          item["name"].getStr(),
+          item["type"].getStr(),
+          item["download_url"].getStr("")
+        ))
   except:
     discard
 
+proc downloadDirectory(owner, repo, path, branch, destDir: string) =
+  ## Recursively download a directory from GitHub
+  createDir(destDir)
+  
+  let contents = listDirectoryContents(owner, repo, path, branch)
+  
+  for item in contents:
+    let destPath = destDir / item.name
+    
+    if item.typeName == "file":
+      if item.url != "":
+        let content = rawGet(item.url)
+        writeFile(destPath, content)
+    elif item.typeName == "dir":
+      let subPath = if path != "": path & "/" & item.name else: item.name
+      downloadDirectory(owner, repo, subPath, branch, destPath)
+
+proc isLikelySkillDir(owner, repo, path, branch: string): bool =
+  ## Check if directory contains skill files (SKILL.md or README.md)
+  let contents = listDirectoryContents(owner, repo, path, branch)
+  for item in contents:
+    if item.typeName == "file":
+      let name = item.name.toLowerAscii
+      if name == "skill.md" or name == "readme.md":
+        return true
+  return false
+
 proc installFromGitHub*(si: SkillInstaller, repo: string): string =
   ## Install skill(s) from GitHub
-  ## Supports: owner/repo, owner/repo/path/to/skill
+  ## Supports:
+  ##   - owner/repo (single skill at root)
+  ##   - owner/repo/subdir (specific skill)
+  ##   - owner/repo (auto-detect multiple skills in subdirs)
   
   let parts = repo.split('/')
   if parts.len < 2:
@@ -97,7 +104,7 @@ proc installFromGitHub*(si: SkillInstaller, repo: string): string =
   let repoName = parts[1]
   let branch = getDefaultBranch(owner, repoName)
   
-  # If path specified, install specific skill
+  # If path specified, install specific subdirectory
   if parts.len > 2:
     let subPath = parts[2..^1].join("/")
     let skillName = lastPathPart(subPath)
@@ -106,19 +113,34 @@ proc installFromGitHub*(si: SkillInstaller, repo: string): string =
     if dirExists(skillDir):
       raise newException(IOError, "Skill '" & skillName & "' already exists")
     
-    let (url, format) = findSkillFile(owner, repoName, subPath, branch)
-    let content = rawGet(url)
+    if not isLikelySkillDir(owner, repoName, subPath, branch):
+      raise newException(IOError, "No SKILL.md or README.md found in " & repo)
     
     if not dirExists(si.getWorkspaceSkillsDir()):
       createDir(si.getWorkspaceSkillsDir())
-    createDir(skillDir)
-    writeFile(skillDir / "SKILL.md", content)
+    
+    downloadDirectory(owner, repoName, subPath, branch, skillDir)
     return skillName
   
-  # No path - try root first
-  try:
-    let (url, format) = findSkillFile(owner, repoName, "", branch)
-    let content = rawGet(url)
+  # Check root for skill files
+  let rootContents = listDirectoryContents(owner, repoName, "", branch)
+  var hasSkillFile = false
+  var subdirs: seq[string] = @[]
+  
+  for item in rootContents:
+    if item.typeName == "file":
+      let name = item.name.toLowerAscii
+      if name == "skill.md" or name == "readme.md":
+        hasSkillFile = true
+    elif item.typeName == "dir":
+      # Skip common non-skill directories
+      if item.name notin [".git", ".github", ".docs", ".claude-plugin", 
+                        "scripts", "tests", "docs", ".gitattributes", 
+                        ".gitignore", "validate_plugins.py", "CONTRIBUTING.md", "LICENSE", "images", "assets"]:
+        subdirs.add(item.name)
+  
+  # If root has skill file, install entire repo as single skill
+  if hasSkillFile:
     let skillName = repoName
     let skillDir = si.getWorkspaceSkillsDir() / skillName
     
@@ -127,44 +149,46 @@ proc installFromGitHub*(si: SkillInstaller, repo: string): string =
     
     if not dirExists(si.getWorkspaceSkillsDir()):
       createDir(si.getWorkspaceSkillsDir())
-    createDir(skillDir)
-    writeFile(skillDir / "SKILL.md", content)
+    
+    downloadDirectory(owner, repoName, "", branch, skillDir)
     return skillName
   
-  except IOError:
-    # No skill at root - check subdirectories
-    let subdirs = listSubdirs(owner, repoName, branch)
+  # No skill at root - try subdirectories
+  var skillSubdirs: seq[string] = @[]
+  for subdir in subdirs:
+    if isLikelySkillDir(owner, repoName, subdir, branch):
+      skillSubdirs.add(subdir)
+  
+  if skillSubdirs.len == 0:
+    raise newException(IOError, "No skills found in " & repo & ". Skills should contain SKILL.md or README.md")
+  
+  # Install all skill subdirectories
+  var installed: seq[string] = @[]
+  var errors: seq[string] = @[]
+  
+  for subdir in skillSubdirs:
+    let skillDir = si.getWorkspaceSkillsDir() / subdir
     
-    if subdirs.len == 0:
-      raise newException(IOError, "No skills found in " & repo)
+    if dirExists(skillDir):
+      errors.add(subdir & " (already exists)")
+      continue
     
-    var installed: seq[string] = @[]
-    var errors: seq[string] = @[]
+    if not dirExists(si.getWorkspaceSkillsDir()):
+      createDir(si.getWorkspaceSkillsDir())
     
-    for subdir in subdirs:
-      try:
-        let (url, format) = findSkillFile(owner, repoName, subdir, branch)
-        let content = rawGet(url)
-        let skillDir = si.getWorkspaceSkillsDir() / subdir
-        
-        if dirExists(skillDir):
-          errors.add(subdir & " (already exists)")
-          continue
-        
-        if not dirExists(si.getWorkspaceSkillsDir()):
-          createDir(si.getWorkspaceSkillsDir())
-        createDir(skillDir)
-        writeFile(skillDir / "SKILL.md", content)
-        installed.add(subdir)
-      except:
-        errors.add(subdir)
-    
-    if installed.len == 0:
-      raise newException(IOError, "No valid skills found")
-    
-    return installed.join(", ")
+    try:
+      downloadDirectory(owner, repoName, subdir, branch, skillDir)
+      installed.add(subdir)
+    except:
+      errors.add(subdir & " (download failed)")
+  
+  if installed.len == 0:
+    raise newException(IOError, "Failed to install skills: " & errors.join(", "))
+  
+  return installed.join(", ")
 
 proc installFromPath*(si: SkillInstaller, sourcePath: string, skillName: string = ""): string =
+  ## Install a skill from a local path
   let src = absolutePath(sourcePath)
   let name = if skillName != "": skillName else: lastPathPart(src)
   let destDir = si.getWorkspaceSkillsDir() / name
@@ -185,13 +209,8 @@ proc installFromPath*(si: SkillInstaller, sourcePath: string, skillName: string 
 
   return name
 
-proc installBuiltin*(si: SkillInstaller, skillName: string): string =
-  let builtinPath = si.builtinSkillsDir / skillName
-  if not dirExists(builtinPath):
-    raise newException(IOError, "Built-in skill '" & skillName & "' not found")
-  return si.installFromPath(builtinPath, skillName)
-
 proc createSkill*(si: SkillInstaller, skillName: string, description: string = ""): string =
+  ## Create a new skill with template
   let skillDir = si.getWorkspaceSkillsDir() / skillName
   
   if dirExists(skillDir):
