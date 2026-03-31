@@ -1,4 +1,3 @@
-import chronicles
 import chronos
 import chronos/apps/http/httpclient
 import std/[json, strutils, tables]
@@ -104,13 +103,13 @@ proc gatewayLoop(c: DiscordChannel) {.async.} =
           c.handleMessage(senderID, chatID, content)
 
     except CatchableError as e:
-      errorCF("discord", "Gateway error", {"error": e.msg}.toTable)
+      error( "Gateway error", topic = "discord", error = e.msg)
       await sleepAsync(5000)
 
 method name*(c: DiscordChannel): string = "discord"
 
 method start*(c: DiscordChannel) {.async.} =
-  infoC("discord", "Starting Discord bot (Gateway mode)...")
+  info( "Starting Discord bot (Gateway mode)...", topic = "discord")
   try:
     let gatewayRes = await c.apiCall("GET", "gateway/bot", meth="GET")
     let url = gatewayRes["url"].getStr()
@@ -126,7 +125,7 @@ method start*(c: DiscordChannel) {.async.} =
     c.running = true
     discard gatewayLoop(c)
   except CatchableError as e:
-    errorCF("discord", "Failed to start Discord bot", {"error": e.msg}.toTable)
+    error("Failed to start Discord bot", topic = "discord", error = e.msg)
 
 method stop*(c: DiscordChannel) {.async.} =
   c.running = false

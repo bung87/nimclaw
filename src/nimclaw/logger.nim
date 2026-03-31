@@ -1,118 +1,61 @@
-import std/[times, strutils, tables]
-import jsony
+import std/[os, times, strformat]
+import chronicles
 
-type
-  LogLevel* = enum
-    DEBUG, INFO, WARN, ERROR, FATAL
+# Define our own LogLevel type alias
+type LogLevel* = chronicles.LogLevel
 
 const
-  logLevelNames: Table[LogLevel, string] = {
-    DEBUG: "DEBUG",
-    INFO:  "INFO",
-    WARN:  "WARN",
-    ERROR: "ERROR",
-    FATAL: "FATAL"
-  }.toTable
+  DEBUG* = LogLevel.DEBUG
+  INFO* = LogLevel.INFO
+  WARN* = LogLevel.WARN
+  ERROR* = LogLevel.ERROR
+  FATAL* = LogLevel.FATAL
 
-var
-  currentLevel = INFO
-  logFile: File
-  fileLoggingEnabled = false
+var currentLevel* = INFO
 
-type
-  LogEntry* = object
-    level*: string
-    timestamp*: string
-    component*: string
-    message*: string
-    fields*: Table[string, string]
-    caller*: string
-
+# Set the current log level
 proc setLevel*(level: LogLevel) =
   currentLevel = level
 
+# Get the current log level
 proc getLevel*(): LogLevel =
-  currentLevel
+  return currentLevel
 
-proc enableFileLogging*(filePath: string): bool =
-  try:
-    if fileLoggingEnabled:
-      logFile.close()
-    logFile = open(filePath, fmAppend)
-    fileLoggingEnabled = true
-    echo "File logging enabled: ", filePath
-    return true
-  except:
-    echo "Failed to open log file: ", filePath
-    return false
+# Custom log template that matches the requested API:
+# log(INFO, "message", topic = "topic", field = value)
+template log*(level: LogLevel, msg: string, props: varargs[untyped]) =
+  if level >= currentLevel:
+    chronicles.log(instantiationInfo(), level, msg, props)
 
-proc disableFileLogging*() =
-  if fileLoggingEnabled:
-    logFile.close()
-    fileLoggingEnabled = false
-    echo "File logging disabled"
+# OS-specific log directory
+proc getDefaultLogDir*(): string =
+  when defined(windows):
+    getEnv("APPDATA") / "nimclaw" / "logs"
+  elif defined(macosx):
+    getHomeDir() / "Library" / "Logs" / "nimclaw"
+  else: # Linux and other Unix-like
+    let xdgDataHome = getEnv("XDG_DATA_HOME")
+    if xdgDataHome != "":
+      xdgDataHome / "nimclaw" / "logs"
+    else:
+      getHomeDir() / ".local" / "share" / "nimclaw" / "logs"
 
-proc formatFields(fields: Table[string, string]): string =
-  if fields.len == 0: return ""
-  var parts: seq[string] = @[]
-  for k, v in fields:
-    parts.add(k & "=" & v)
-  return " {" & parts.join(", ") & "}"
+# Get log file path with date-based rotation
+proc getLogFilePath*(logDir: string, appName: string = "nimclaw"): string =
+  let dateStr = now().format("yyyy-MM-dd")
+  logDir / fmt"{appName}-{dateStr}.log"
 
-proc logMessage(level: LogLevel, component: string, message: string, fields: Table[string, string] = initTable[string, string]()) =
-  if level < currentLevel:
-    return
-
-  let now = now().utc
-  let timestamp = now.format("yyyy-MM-dd'T'HH:mm:ss'Z'")
-
-  var entry = LogEntry(
-    level: logLevelNames[level],
-    timestamp: timestamp,
-    component: component,
-    message: message,
-    fields: fields
-  )
-
-  # In Nim, getting caller info is a bit different, we can use getStackTrace() or similar if needed
-  # but for now let's keep it simple.
-
-  if fileLoggingEnabled:
+# Initialize logger with file output
+proc initLogger*(logDir: string = "", appName: string = "nimclaw") =
+  let logPath = if logDir == "": getDefaultLogDir() else: logDir
+  
+  if not dirExists(logPath):
     try:
-      logFile.writeLine(entry.toJson() & "\n")
-      logFile.flushFile()
-    except:
+      createDir(logPath)
+    except CatchableError:
       discard
-
-  let componentStr = if component != "": " " & component & ":" else: ""
-  let fieldStr = formatFields(fields)
-
-  echo "[$1] [$2]$3 $4$5".format(timestamp, logLevelNames[level], componentStr, message, fieldStr)
-
-  if level == FATAL:
-    quit(1)
-
-proc debug*(message: string) = logMessage(DEBUG, "", message)
-proc debugC*(component, message: string) = logMessage(DEBUG, component, message)
-proc debugF*(message: string, fields: Table[string, string]) = logMessage(DEBUG, "", message, fields)
-proc debugCF*(component, message: string, fields: Table[string, string]) = logMessage(DEBUG, component, message, fields)
-
-proc info*(message: string) = logMessage(INFO, "", message)
-proc infoC*(component, message: string) = logMessage(INFO, component, message)
-proc infoF*(message: string, fields: Table[string, string]) = logMessage(INFO, "", message, fields)
-proc infoCF*(component, message: string, fields: Table[string, string]) = logMessage(INFO, component, message, fields)
-
-proc warn*(message: string) = logMessage(WARN, "", message)
-proc warnC*(component, message: string) = logMessage(WARN, component, message)
-proc warnF*(message: string, fields: Table[string, string]) = logMessage(WARN, "", message, fields)
-proc warnCF*(component, message: string, fields: Table[string, string]) = logMessage(WARN, component, message, fields)
-
-proc error*(message: string) = logMessage(ERROR, "", message)
-proc errorC*(component, message: string) = logMessage(ERROR, component, message)
-proc errorF*(message: string, fields: Table[string, string]) = logMessage(ERROR, "", message, fields)
-proc errorCF*(component, message: string, fields: Table[string, string]) = logMessage(ERROR, component, message, fields)
-
-proc fatal*(message: string) = logMessage(FATAL, "", message)
-proc fatalC*(component, message: string) = logMessage(FATAL, component, message)
-proc fatalF*(message: string, fields: Table[string, string]) = logMessage(FATAL, "", message, fields)
-proc fatalCF*(component, message: string, fields: Table[string, string]) = logMessage(FATAL, component, message, fields)
+  
+  let logFile = getLogFilePath(logPath, appName)
+  putEnv("CHRONICLES_FILE", logFile)
+  
+  log(INFO, "Logger initialized", logDir = logPath, logFile = logFile)

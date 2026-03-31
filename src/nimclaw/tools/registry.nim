@@ -61,11 +61,11 @@ proc getDefinitions*(r: ToolRegistry): seq[ToolDefinition] {.raises: [].} =
     result.add(toolToSchema(tool))
 
 proc executeWithContext*(r: ToolRegistry, name: string, args: Table[string, JsonNode], channel, chatID: string): Future[string] {.async.} =
-  infoCF("tool", "Tool execution started", {"tool": name, "args": $args}.toTable)
+  info("Tool execution started", topic = "tool", tool = name, args = $args)
 
   let (tool, ok) = r.get(name)
   if not ok:
-    errorCF("tool", "Tool not found", {"tool": name}.toTable)
+    error("Tool not found", topic = "tool", tool = name)
     return "Error: tool '" & name & "' not found"
 
   if tool of ContextualTool and channel != "" and chatID != "":
@@ -80,9 +80,9 @@ proc executeWithContext*(r: ToolRegistry, name: string, args: Table[string, Json
     result = await tool.execute(args)
   except CatchableError as e:
     let duration = (now() - start).inMilliseconds
-    errorCF("tool", "Tool execution failed", {"tool": name, "duration": $duration, "error": e.msg}.toTable)
+    error("Tool execution failed", topic = "tool", tool = name, duration = $duration, error = e.msg)
     return "Error: " & e.msg
 
   let duration = (now() - start).inMilliseconds
-  infoCF("tool", "Tool execution completed", {"tool": name, "duration_ms": $duration, "result_length": $result.len}.toTable)
+  info("Tool execution completed", topic = "tool", tool = name, duration_ms = $duration, result_length = $result.len)
   return result

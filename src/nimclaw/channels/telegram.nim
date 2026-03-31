@@ -53,7 +53,7 @@ proc apiCall(c: TelegramChannel, method_name: string, payload: JsonNode): Future
   
   let addressRes = c.session.getAddress(url)
   if addressRes.isErr:
-    errorCF("telegram", "Failed to resolve URL", {"url": url}.toTable)
+    error( "Failed to resolve URL", topic = "telegram", url = url)
     return %*{"ok": false}
   let address = addressRes.get()
   
@@ -75,12 +75,12 @@ proc apiCall(c: TelegramChannel, method_name: string, payload: JsonNode): Future
     let body = cast[string](bodyBytes)
     let json = parseJson(body)
     if not json["ok"].getBool():
-      errorCF("telegram", "API error", {"method": method_name, "error": json.getOrDefault("description").getStr()}.toTable)
+      error("API error", topic = "telegram", method_name = method_name, error = json.getOrDefault("description").getStr())
     return json
   except CatchableError as e:
     if not isNil(response):
       await response.closeWait()
-    errorCF("telegram", "Request failed", {"method": method_name, "error": e.msg}.toTable)
+    error("Request failed", topic = "telegram", method_name = method_name, error = e.msg)
     return %*{"ok": false}
 
 proc downloadFile(c: TelegramChannel, fileID: string, ext: string): Future[string] {.async.} =
@@ -185,7 +185,7 @@ proc handleTelegramUpdate(c: TelegramChannel, update: JsonNode) {.async.} =
   try:
     c.handleMessage(senderID, chatID, content, mediaPaths)
   except CatchableError as e:
-    errorCF("telegram", "Failed to handle message", {"error": e.msg}.toTable)
+    error("Failed to handle message", topic = "telegram", error = e.msg)
 
 proc poll(c: TelegramChannel) {.async.} =
   while c.running:
@@ -196,16 +196,16 @@ proc poll(c: TelegramChannel) {.async.} =
           c.lastUpdateID = update["update_id"].getInt()
           discard handleTelegramUpdate(c, update)
     except CatchableError as e:
-      errorCF("telegram", "Polling error", {"error": e.msg}.toTable)
+      error("Polling error", topic = "telegram", error = e.msg)
       await sleepAsync(5000)
 
 method name*(c: TelegramChannel): string = "telegram"
 
 method start*(c: TelegramChannel) {.async.} =
-  infoC("telegram", "Starting Telegram bot (raw mode)...")
+  info( "Starting Telegram bot (raw mode)...", topic = "telegram")
   let me = await c.apiCall("getMe", %*{})
   if me["ok"].getBool():
-    infoCF("telegram", "Telegram bot connected", {"username": me["result"]["username"].getStr()}.toTable)
+    info("Telegram bot connected", topic = "telegram", username = me["result"]["username"].getStr())
     c.running = true
     discard poll(c)
 

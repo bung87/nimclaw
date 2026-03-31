@@ -40,8 +40,7 @@ proc onboard() =
   createWorkspaceTemplates(workspace)
   echo logo, " picoclaw is ready!"
 
-proc agent(message = "", session = "cli:default", debug = false) =
-  if debug: setLevel(DEBUG)
+proc agent(message = "", session = "cli:default") =
   let cfg = loadConfig(getConfigPath())
   let agentLoop = newAgentLoop(cfg, newMessageBus(), createProvider(cfg))
   if message != "": echo logo, " ", waitFor agentLoop.processDirect(message, session)
@@ -53,8 +52,7 @@ proc agent(message = "", session = "cli:default", debug = false) =
       if input == "": continue
       echo "\n", logo, " ", waitFor agentLoop.processDirect(input, session), "\n"
 
-proc gateway(debug = false) =
-  if debug: setLevel(DEBUG)
+proc gateway() =
   let cfg = loadConfig(getConfigPath())
   let msgBus = newMessageBus()
   let agentLoop = newAgentLoop(cfg, msgBus, createProvider(cfg))

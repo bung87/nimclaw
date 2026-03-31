@@ -57,13 +57,13 @@ proc getTenantAccessToken(c: FeishuChannel) {.async.} =
     let res = parseJson(body)
     if res.hasKey("tenant_access_token"):
       c.token = res["tenant_access_token"].getStr()
-      infoC("feishu", "Obtained Feishu tenant access token")
+      info( "Obtained Feishu tenant access token", topic = "feishu")
     else:
-      errorCF("feishu", "Failed to get token", {"response": body}.toTable)
+      error( "Failed to get token", topic = "feishu", response = body)
   except CatchableError as e:
     if not isNil(response):
       await response.closeWait()
-    errorCF("feishu", "Auth error", {"error": e.msg}.toTable)
+    error("Auth error", topic = "feishu", error = e.msg)
 
 proc feishuGatewayLoop(c: FeishuChannel) {.async.} =
   while c.running:
@@ -95,18 +95,18 @@ proc feishuGatewayLoop(c: FeishuChannel) {.async.} =
           else:
             content = "[Non-text message]"
 
-          infoCF("feishu", "Received message", {"sender": senderID}.toTable)
+          info("Received message", topic = "feishu", sender = senderID)
           c.handleMessage(senderID, chatID, content)
 
     except CatchableError as e:
-      errorCF("feishu", "Gateway error", {"error": e.msg}.toTable)
+      error("Gateway error", topic = "feishu", error = e.msg)
       await sleepAsync(5000)
 
 method name*(c: FeishuChannel): string = "feishu"
 
 method start*(c: FeishuChannel) {.async.} =
   if c.appID == "" or c.appSecret == "": return
-  infoC("feishu", "Starting Feishu channel (WS mode)...")
+  info("Starting Feishu channel (WS mode)...", topic = "feishu")
   await c.getTenantAccessToken()
 
   var headers: seq[HttpHeaderTuple] = @[
@@ -117,7 +117,7 @@ method start*(c: FeishuChannel) {.async.} =
   let addressRes = c.session.getAddress(url)
   if addressRes.isErr:
     c.running = true
-    infoC("feishu", "Feishu started in send-only mode (WS failed)")
+    info("Feishu started in send-only mode (WS failed)", topic = "feishu")
     return
   let address = addressRes.get()
   
@@ -149,14 +149,14 @@ method start*(c: FeishuChannel) {.async.} =
       c.ws = await WebSocket.connect(wsHost, wsPath, secure = wsUrl.startsWith("wss"))
       c.running = true
       discard feishuGatewayLoop(c)
-      infoC("feishu", "Feishu connected via WebSocket")
+      info("Feishu connected via WebSocket", topic = "feishu")
     else:
       c.running = true
-      infoC("feishu", "Feishu started in send-only mode (WS failed)")
+      info("Feishu started in send-only mode (WS failed)", topic = "feishu")
   except CatchableError as e:
     if not isNil(response):
       await response.closeWait()
-    errorCF("feishu", "WS handshake failed", {"error": e.msg}.toTable)
+    error("WS handshake failed", topic = "feishu", error = e.msg)
     c.running = true
 
 method stop*(c: FeishuChannel) {.async.} =
@@ -207,10 +207,10 @@ method send*(c: FeishuChannel, msg: OutboundMessage) {.async.} =
     await resp.closeWait()
     resp = nil
     if status != 200:
-      errorCF("feishu", "Send failed", {"status": $status, "response": cast[string](bodyBytes)}.toTable)
+      error("Send failed", topic = "feishu", status = $status, response = cast[string](bodyBytes))
   except CatchableError as e:
     if not isNil(resp):
       await resp.closeWait()
-    errorCF("feishu", "Send error", {"error": e.msg}.toTable)
+    error("Send error", topic = "feishu", error = e.msg)
 
 method isRunning*(c: FeishuChannel): bool = c.running

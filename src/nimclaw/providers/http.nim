@@ -75,7 +75,7 @@ method chat*(p: HTTPProvider, messages: seq[Message], tools: seq[ToolDefinition]
     raise newException(IOError, "API error ($1): $2".format($response.status, bodyText))
 
   let jsonResp = parseJson(bodyText)
-  debugCF("http", "LLM response received", {"body": bodyText[0..<min(500, bodyText.len)]}.toTable)
+  debug( "LLM response received", topic = "http", body = bodyText[0..<min(500, bodyText.len)])
 
   var llmResp = LLMResponse()
   if jsonResp.hasKey("choices") and jsonResp["choices"].len > 0:
@@ -116,9 +116,9 @@ method chat*(p: HTTPProvider, messages: seq[Message], tools: seq[ToolDefinition]
               toolCall.arguments["raw"] = %argsStr
         if toolCall.name != "":
           llmResp.tool_calls.add(toolCall)
-          debugCF("http", "Parsed tool call", {"name": toolCall.name, "id": toolCall.id}.toTable)
+          debug( "Parsed tool call", topic = "http", name = toolCall.name, id = toolCall.id)
         else:
-          debugCF("http", "Skipping tool call with empty name", {"tc": $tc}.toTable)
+          debug("Skipping tool call with empty name", topic = "http", tc = $tc)
 
     llmResp.finish_reason = choice.getOrDefault("finish_reason").getStr("stop")
 

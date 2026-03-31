@@ -38,11 +38,11 @@ proc listen(c: WhatsAppChannel) {.async.} =
 
         c.handleMessage(senderID, chatID, content, @[], metadata)
     except CatchableError as e:
-      errorCF("whatsapp", "WhatsApp read error", {"error": e.msg}.toTable)
+      error( "WhatsApp read error", topic = "whatsapp", error = e.msg)
       await sleepAsync(2000)
 
 method start*(c: WhatsAppChannel) {.async.} =
-  infoC("whatsapp", "Starting WhatsApp channel connecting to " & c.url)
+  info( "Starting WhatsApp channel", topic = "whatsapp", url = c.url)
   try:
     # Parse WebSocket URL
     var wsHost = c.url.replace("wss://", "").replace("ws://", "")
@@ -55,9 +55,9 @@ method start*(c: WhatsAppChannel) {.async.} =
     c.conn = await WebSocket.connect(wsHost, wsPath, secure = c.url.startsWith("wss"))
     c.running = true
     discard listen(c)
-    infoC("whatsapp", "WhatsApp channel connected")
+    info("WhatsApp channel connected", topic = "whatsapp")
   except CatchableError as e:
-    errorCF("whatsapp", "Failed to connect to WhatsApp bridge", {"error": e.msg}.toTable)
+    error("Failed to connect to WhatsApp bridge", topic = "whatsapp", error = e.msg)
 
 method stop*(c: WhatsAppChannel) {.async.} =
   c.running = false
@@ -72,6 +72,6 @@ method send*(c: WhatsAppChannel, msg: OutboundMessage) {.async.} =
   try:
     await c.conn.send($payload)
   except CatchableError as e:
-    errorCF("whatsapp", "Failed to send WhatsApp message", {"error": e.msg}.toTable)
+    error("Failed to send WhatsApp message", topic = "whatsapp", error = e.msg)
 
 method isRunning*(c: WhatsAppChannel): bool = c.running

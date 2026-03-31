@@ -154,18 +154,18 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
 
   while iteration < al.maxIterations:
     iteration += 1
-    debugCF("agent", "LLM iteration", {"iteration": $iteration, "max": $al.maxIterations}.toTable)
+    debug( "LLM iteration", topic = "agent", iteration = $iteration, max = $al.maxIterations)
 
     var toolDefs: seq[ToolDefinition] = @[]
     try:
       toolDefs = al.tools.getDefinitions()
     except CatchableError as e:
-      errorCF("agent", "Failed to get tool definitions", {"error": e.msg}.toTable)
+      error( "Failed to get tool definitions", topic = "agent", error = e.msg)
     let response = await al.provider.chat(currentMessages, toolDefs, al.model, initTable[string, JsonNode]())
 
     if response.tool_calls.len == 0:
       finalContent = response.content
-      infoCF("agent", "LLM response without tool calls", {"iteration": $iteration}.toTable)
+      info( "LLM response without tool calls", topic = "agent", iteration = $iteration)
       break
 
     var assistantMsg = providers_types.Message(role: "assistant", content: response.content, tool_calls: response.tool_calls)
@@ -175,9 +175,9 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
     var allToolErrors: seq[string] = @[]
     for tc in response.tool_calls:
       if tc.name == "":
-        warnCF("agent", "Skipping tool call with empty name", {"iteration": $iteration}.toTable)
+        warn( "Skipping tool call with empty name", topic = "agent", iteration = $iteration)
         continue
-      infoCF("agent", "Tool call: " & tc.name, {"tool": tc.name, "iteration": $iteration}.toTable)
+      info( "Tool call", topic = "agent", name = tc.name, iteration = $iteration)
       let result = await al.tools.executeWithContext(tc.name, tc.arguments, opts.channel, opts.chatID)
       if result.startsWith("Error: "):
         allToolErrors.add(tc.name & ": " & result)
@@ -199,7 +199,7 @@ proc runAgentLoop*(al: AgentLoop, opts: ProcessOptions): Future[string] {.async.
   try:
     messages = al.contextBuilder.buildMessages(history, summary, opts.userMessage, opts.channel, opts.chatID)
   except CatchableError as e:
-    errorCF("agent", "Failed to build messages", {"error": e.msg}.toTable)
+    error( "Failed to build messages", topic = "agent", error = e.msg)
 
   al.sessions.addMessage(opts.sessionKey, "user", opts.userMessage)
 
@@ -218,11 +218,11 @@ proc runAgentLoop*(al: AgentLoop, opts: ProcessOptions): Future[string] {.async.
   if opts.sendResponse:
     al.bus.publishOutbound(OutboundMessage(channel: opts.channel, chat_id: opts.chatID, content: finalContent))
 
-  infoCF("agent", "Response: " & truncate(finalContent, 120), {"session_key": opts.sessionKey, "iterations": $iteration}.toTable)
+  info("Response", topic = "agent", content = truncate(finalContent, 120), session_key = opts.sessionKey, iterations = $iteration)
   return finalContent
 
 proc processMessage*(al: AgentLoop, msg: InboundMessage): Future[string] {.async.} =
-  infoCF("agent", "Processing message from " & msg.channel & ":" & msg.sender_id, {"session_key": msg.session_key}.toTable)
+  info("Processing message", topic = "agent", channel = msg.channel, sender = msg.sender_id, session_key = msg.session_key)
 
   # update tool contexts
   try:
