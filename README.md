@@ -135,3 +135,21 @@ nimclaw includes example skills in the `skills/` directory:
 # Copy example skill to your workspace
 cp -r skills/example_skill ~/.picoclaw/workspace/skills/
 ```
+
+### Using Skills
+
+Once installed, skills are automatically loaded into the agent's context. The LLM can:
+
+1. **Read skill files** using the `read_file` tool to access skill documentation
+2. **Use skill knowledge** to perform specialized tasks
+
+Skills are located at `~/.picoclaw/workspace/skills/{skill-name}/` and typically contain:
+- `SKILL.md` - Main skill documentation and instructions
+- Additional files (templates, examples, etc.)
+
+To use a specific skill, simply ask the agent to use it:
+
+```
+You: Use the pm-product-strategy skill to analyze my product idea
+Agent: [reads the skill files and applies the methodology]
+```
