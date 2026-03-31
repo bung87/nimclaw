@@ -1,6 +1,7 @@
 import std/[asyncdispatch, json, strutils, tables], httpclient
 import types
 import ../config as claw_config
+import ../logger
 
 type
   HTTPProvider* = ref object of LLMProvider
@@ -44,6 +45,7 @@ method chat*(p: HTTPProvider, messages: seq[Message], tools: seq[ToolDefinition]
   p.client.headers = newHttpHeaders({
     "Content-Type": "application/json"
   })
+
   if p.apiKey != "":
     p.client.headers["Authorization"] = "Bearer " & p.apiKey
 
@@ -55,6 +57,7 @@ method chat*(p: HTTPProvider, messages: seq[Message], tools: seq[ToolDefinition]
     raise newException(IOError, "API error ($1): $2".format(response.status, body))
 
   let jsonResp = parseJson(body)
+  debugCF("http", "LLM response received", {"body": body[0..<min(500, body.len)]}.toTable)
 
   var llmResp = LLMResponse()
   if jsonResp.hasKey("choices") and jsonResp["choices"].len > 0:
@@ -63,23 +66,41 @@ method chat*(p: HTTPProvider, messages: seq[Message], tools: seq[ToolDefinition]
     if msg.hasKey("content") and msg["content"].kind != JNull:
       llmResp.content = msg["content"].getStr()
 
+    # Handle tool_calls from OpenAI-compatible APIs
     if msg.hasKey("tool_calls"):
       for tc in msg["tool_calls"]:
         var toolCall = ToolCall(
-          id: tc["id"].getStr(),
+          id: tc.getOrDefault("id").getStr(""),
           `type`: tc.getOrDefault("type").getStr("function")
         )
+        # Standard OpenAI format: tool_calls[].function.name
         if tc.hasKey("function"):
           let fn = tc["function"]
-          toolCall.name = fn["name"].getStr()
-          let argsStr = fn["arguments"].getStr()
-          try:
-            let argsJson = parseJson(argsStr)
-            for k, v in argsJson.fields:
-              toolCall.arguments[k] = v
-          except:
-            toolCall.arguments["raw"] = %argsStr
-        llmResp.tool_calls.add(toolCall)
+          toolCall.name = fn.getOrDefault("name").getStr("")
+          if fn.hasKey("arguments"):
+            let argsStr = fn["arguments"].getStr()
+            try:
+              let argsJson = parseJson(argsStr)
+              for k, v in argsJson.fields:
+                toolCall.arguments[k] = v
+            except:
+              toolCall.arguments["raw"] = %argsStr
+        # Some providers may put name directly in tool_calls[]
+        elif tc.hasKey("name"):
+          toolCall.name = tc["name"].getStr("")
+          if tc.hasKey("arguments"):
+            let argsStr = tc["arguments"].getStr()
+            try:
+              let argsJson = parseJson(argsStr)
+              for k, v in argsJson.fields:
+                toolCall.arguments[k] = v
+            except:
+              toolCall.arguments["raw"] = %argsStr
+        if toolCall.name != "":
+          llmResp.tool_calls.add(toolCall)
+          debugCF("http", "Parsed tool call", {"name": toolCall.name, "id": toolCall.id}.toTable)
+        else:
+          debugCF("http", "Skipping tool call with empty name", {"tc": $tc}.toTable)
 
     llmResp.finish_reason = choice.getOrDefault("finish_reason").getStr("stop")
 
@@ -124,6 +145,9 @@ proc createProvider*(cfg: Config): LLMProvider =
     elif cfg.providers.vllm.api_base != "":
       apiKey = cfg.providers.vllm.api_key
       apiBase = cfg.providers.vllm.api_base
+    elif (lowerModel.contains("kimi") or model.startsWith("moonshot/")) and cfg.providers.kimi.api_key != "":
+      apiKey = cfg.providers.kimi.api_key
+      apiBase = if cfg.providers.kimi.api_base != "": cfg.providers.kimi.api_base else: "https://api.moonshot.cn/v1"
     else:
       if cfg.providers.openrouter.api_key != "":
         apiKey = cfg.providers.openrouter.api_key

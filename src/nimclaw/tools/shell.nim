@@ -94,7 +94,9 @@ method execute*(t: ExecTool, args: Table[string, JsonNode]): Future[string] {.as
 
   # Actually, std/osproc has startProcess and we can poll it.
 
-  var p = startProcess("sh", workingDir = cwd, args = ["-c", command], options = {poStdErrToStdOut})
+  let shell = when defined(windows): "cmd" else: "/bin/sh"
+  let shellArgs = when defined(windows): ["/c", command] else: ["-c", command]
+  var p = startProcess(shell, workingDir = cwd, args = shellArgs, options = {poStdErrToStdOut})
   let startTime = now()
   var output = ""
 

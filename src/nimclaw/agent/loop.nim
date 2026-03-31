@@ -168,6 +168,9 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
     al.sessions.addFullMessage(opts.sessionKey, assistantMsg)
 
     for tc in response.tool_calls:
+      if tc.name == "":
+        warnCF("agent", "Skipping tool call with empty name", {"iteration": $iteration}.toTable)
+        continue
       infoCF("agent", "Tool call: " & tc.name, {"tool": tc.name, "iteration": $iteration}.toTable)
       let result = await al.tools.executeWithContext(tc.name, tc.arguments, opts.channel, opts.chatID)
       let toolResultMsg = providers_types.Message(role: "tool", content: result, tool_call_id: tc.id)

@@ -74,6 +74,7 @@ type
     zhipu*: ProviderConfig
     vllm*: ProviderConfig
     gemini*: ProviderConfig
+    kimi*: ProviderConfig
 
   GatewayConfig* = object
     host*: string
@@ -167,6 +168,7 @@ proc getAPIKey*(cfg: Config): string =
   if cfg.providers.zhipu.api_key != "": return cfg.providers.zhipu.api_key
   if cfg.providers.groq.api_key != "": return cfg.providers.groq.api_key
   if cfg.providers.vllm.api_key != "": return cfg.providers.vllm.api_key
+  if cfg.providers.kimi.api_key != "": return cfg.providers.kimi.api_key
   return ""
 
 proc getAPIBase*(cfg: Config): string =
@@ -175,4 +177,7 @@ proc getAPIBase*(cfg: Config): string =
     return "https://openrouter.ai/api/v1"
   if cfg.providers.zhipu.api_key != "": return cfg.providers.zhipu.api_base
   if cfg.providers.vllm.api_key != "" and cfg.providers.vllm.api_base != "": return cfg.providers.vllm.api_base
+  if cfg.providers.kimi.api_key != "":
+    if cfg.providers.kimi.api_base != "": return cfg.providers.kimi.api_base
+    return "https://api.moonshot.cn/v1"
   return ""
