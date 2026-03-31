@@ -83,3 +83,55 @@ Edit `~/.picoclaw/config.json`:
   }
 }
 ```
+
+## Skills
+
+Skills extend nimclaw's capabilities by providing specialized knowledge and instructions.
+
+### Installing Skills
+
+Skills are installed locally in your workspace:
+
+```bash
+# Create skill directory
+mkdir -p ~/.picoclaw/workspace/skills/my_skill
+
+# Add SKILL.md file
+cat > ~/.picoclaw/workspace/skills/my_skill/SKILL.md << 'EOF'
+---
+name: my_skill
+description: My custom skill
+---
+
+# My Skill
+
+Your skill content here...
+EOF
+```
+
+### Skill Format
+
+A skill is a directory containing a `SKILL.md` file:
+
+```
+~/.picoclaw/workspace/skills/
+├── my_skill/
+│   └── SKILL.md
+└── another_skill/
+    └── SKILL.md
+```
+
+The SKILL.md supports YAML frontmatter for metadata:
+- `name`: Skill identifier
+- `description`: Short description
+- `author`: Author name
+- `tags`: List of tags
+
+### Built-in Skills
+
+nimclaw includes example skills in the `skills/` directory:
+
+```bash
+# Copy example skill to your workspace
+cp -r skills/example_skill ~/.picoclaw/workspace/skills/
+```
