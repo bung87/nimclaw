@@ -5,6 +5,9 @@ import types
 import ../config as claw_config
 import ../logger
 
+const
+  MAX_JSON_RESPONSE_SIZE = 10 * 1024 * 1024 # 10MB limit for JSON responses
+
 type
   HTTPProvider* = ref object of LLMProvider
     apiKey*: string
@@ -22,7 +25,8 @@ proc newHTTPProvider*(apiKey, apiBase: string): HTTPProvider =
 method getDefaultModel*(p: HTTPProvider): string {.raises: [].} =
   return ""
 
-method chat*(p: HTTPProvider, messages: seq[Message], tools: seq[ToolDefinition], model: string, options: Table[string, JsonNode]): Future[LLMResponse] {.async.} =
+method chat*(p: HTTPProvider, messages: seq[Message], tools: seq[ToolDefinition], model: string, options: Table[string,
+    JsonNode]): Future[LLMResponse] {.async.} =
   if p.apiBase == "":
     raise newException(ValueError, "API base not configured")
 
@@ -47,7 +51,7 @@ method chat*(p: HTTPProvider, messages: seq[Message], tools: seq[ToolDefinition]
 
   let url = p.apiBase & "/chat/completions"
   let bodyStr = $requestBody
-  
+
   var headers: seq[HttpHeaderTuple] = @[]
   headers.add((key: "Content-Type", value: "application/json"))
   if p.apiKey != "":
@@ -58,7 +62,7 @@ method chat*(p: HTTPProvider, messages: seq[Message], tools: seq[ToolDefinition]
   if addressRes.isErr:
     raise newException(IOError, "Failed to resolve URL: " & url)
   let address = addressRes.get()
-  
+
   let request = HttpClientRequestRef.new(
     p.session,
     address,
@@ -66,7 +70,7 @@ method chat*(p: HTTPProvider, messages: seq[Message], tools: seq[ToolDefinition]
     headers = headers,
     body = bodyStr.toOpenArrayByte(0, bodyStr.len - 1)
   )
-  
+
   let response = await request.send()
   let bodyBytes = await response.getBodyBytes()
   let bodyText = cast[string](bodyBytes)
@@ -74,8 +78,13 @@ method chat*(p: HTTPProvider, messages: seq[Message], tools: seq[ToolDefinition]
   if response.status < 200 or response.status >= 300:
     raise newException(IOError, "API error ($1): $2".format($response.status, bodyText))
 
+  # Validate JSON response size before parsing
+  if bodyBytes.len > MAX_JSON_RESPONSE_SIZE:
+    raise newException(IOError, "JSON response too large ($1 bytes, max $2)".format($bodyBytes.len,
+        $MAX_JSON_RESPONSE_SIZE))
+
   let jsonResp = parseJson(bodyText)
-  debug( "LLM response received", topic = "http", body = bodyText[0..<min(500, bodyText.len)])
+  debug("LLM response received", topic = "http", body = bodyText[0..<min(500, bodyText.len)])
 
   var llmResp = LLMResponse()
   if jsonResp.hasKey("choices") and jsonResp["choices"].len > 0:
@@ -116,7 +125,7 @@ method chat*(p: HTTPProvider, messages: seq[Message], tools: seq[ToolDefinition]
               toolCall.arguments["raw"] = %argsStr
         if toolCall.name != "":
           llmResp.tool_calls.add(toolCall)
-          debug( "Parsed tool call", topic = "http", name = toolCall.name, id = toolCall.id)
+          debug("Parsed tool call", topic = "http", name = toolCall.name, id = toolCall.id)
         else:
           debug("Skipping tool call with empty name", topic = "http", tc = $tc)
 
@@ -174,9 +183,9 @@ proc createProvider*(cfg: Config): LLMProvider =
         raise newException(ValueError, "no API key configured for model: " & model)
 
   if apiKey == "" and not model.startsWith("bedrock/"):
-     raise newException(ValueError, "no API key configured for provider (model: " & model & ")")
+    raise newException(ValueError, "no API key configured for provider (model: " & model & ")")
 
   if apiBase == "":
-     raise newException(ValueError, "no API base configured for provider (model: " & model & ")")
+    raise newException(ValueError, "no API base configured for provider (model: " & model & ")")
 
   return newHTTPProvider(apiKey, apiBase)

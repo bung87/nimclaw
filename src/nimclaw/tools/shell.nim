@@ -20,7 +20,23 @@ proc newExecTool*(workingDir: string): ExecTool =
     r"\bdd\s+if=",
     r">\s*/dev/sd[a-z]\b",
     r"\b(shutdown|reboot|poweroff)\b",
-    r":\(\)\s*\{.*\};\s*:"
+    r":\(\)\s*\{.*\};\s*:",
+    r"\$\(.*\)",
+    r"`.*`",
+    r"\|.*nc\b",
+    r"\|.*netcat\b",
+    r"nc\s+-l",
+    r"curl\s+.*\|.*sh",
+    r"wget\s+.*\|.*sh",
+    r">\s*/dev/tcp/",
+    r"\<\s*/dev/tcp/",
+    r"eval\s+",
+    r"exec\s+",
+    r"base64\s+-d.*\|.*sh",
+    r"chmod\s+777",
+    r"chown\s+",
+    r"mount\s+",
+    r"umount\s+"
   ]
   var denyPatterns: seq[Regex2] = @[]
   for p in denyPatternsStrings:
@@ -43,12 +59,12 @@ method parameters*(t: ExecTool): Table[string, JsonNode] =
       "command": {
         "type": "string",
         "description": "The shell command to execute"
-      },
-      "working_dir": {
-        "type": "string",
-        "description": "Optional working directory for the command"
-      }
     },
+    "working_dir": {
+      "type": "string",
+      "description": "Optional working directory for the command"
+    }
+  },
     "required": %["command"]
   }.toTable
 
@@ -71,6 +87,10 @@ proc guardCommand(t: ExecTool, command, cwd: string): string =
     if command.contains("..\\") or command.contains("../"):
       return "Command blocked by safety guard (path traversal detected)"
     # More strict path check could be added here
+
+  # Always check for path traversal in working directory
+  if cwd != "" and (cwd.contains("..\\") or cwd.contains("../") or cwd.contains("~")):
+    return "Command blocked by safety guard (working directory contains path traversal)"
 
   return ""
 

@@ -44,10 +44,33 @@ proc newSessionManager*(storage: string, maxSessions: int = MAX_SESSION_COUNT): 
     # loadSessions would be here
     for file in walkFiles(safeStorage / "*.json"):
       try:
+        # Extract session key from filename BEFORE loading JSON (TOCTOU fix)
+        let filename = extractFilename(file)
+        if not filename.endsWith(".json"):
+          continue
+        let sessionKey = filename[0..<filename.len-5] # Remove ".json"
+
+        # Validate session key before parsing JSON (use isValidSessionKey from security)
+        if not isValidSessionKey(sessionKey):
+          # Remove malformed session file
+          try:
+            removeFile(file)
+          except:
+            discard
+          continue
+
         let data = readFile(file)
         let session = data.fromJson(Session)
-        # Validate loaded session key
-        discard validateSessionKey(session.key)
+
+        # Double-check the loaded session key matches the filename
+        if session.key != sessionKey:
+          # Session key mismatch, remove file
+          try:
+            removeFile(file)
+          except:
+            discard
+          continue
+
         # Check session age
         let ageSeconds = getTime().toUnixFloat() - session.updated
         if ageSeconds > (MAX_SESSION_AGE_DAYS * 24 * 60 * 60):

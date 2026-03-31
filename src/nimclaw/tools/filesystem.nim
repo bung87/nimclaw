@@ -1,6 +1,7 @@
 import chronos
 import std/[os, json, tables, strutils]
 import types
+import ../security
 
 type
   ReadFileTool* = ref object of Tool
@@ -17,8 +18,8 @@ method parameters*(t: ReadFileTool): Table[string, JsonNode] =
       "path": {
         "type": "string",
         "description": "Path to the file to read"
-      }
-    },
+    }
+  },
     "required": %["path"]
   }.toTable
 
@@ -26,7 +27,10 @@ method execute*(t: ReadFileTool, args: Table[string, JsonNode]): Future[string] 
   if not args.hasKey("path"): return "Error: path is required"
   let path = args["path"].getStr()
   try:
-    return readFile(path)
+    let safePath = validatePath(path)
+    return readFile(safePath)
+  except ValidationError as e:
+    return "Error: " & e.msg
   except CatchableError as e:
     return "Error: failed to read file: " & e.msg
 
@@ -40,12 +44,12 @@ method parameters*(t: WriteFileTool): Table[string, JsonNode] =
       "path": {
         "type": "string",
         "description": "Path to the file to write"
-      },
-      "content": {
-        "type": "string",
-        "description": "Content to write to the file"
-      }
     },
+    "content": {
+      "type": "string",
+      "description": "Content to write to the file"
+    }
+  },
     "required": %["path", "content"]
   }.toTable
 
@@ -54,12 +58,15 @@ method execute*(t: WriteFileTool, args: Table[string, JsonNode]): Future[string]
   if not args.hasKey("content"): return "Error: content is required"
   let path = args["path"].getStr()
   let content = args["content"].getStr()
-  let dir = parentDir(path)
   try:
+    let safePath = validatePath(path)
+    let dir = parentDir(safePath)
     if dir != "" and not dirExists(dir):
       createDir(dir)
-    writeFile(path, content)
+    writeFile(safePath, content)
     return "File written successfully"
+  except ValidationError as e:
+    return "Error: " & e.msg
   except CatchableError as e:
     return "Error: failed to write file: " & e.msg
 
@@ -73,20 +80,23 @@ method parameters*(t: ListDirTool): Table[string, JsonNode] =
       "path": {
         "type": "string",
         "description": "Path to list"
-      }
-    },
+    }
+  },
     "required": %["path"]
   }.toTable
 
 method execute*(t: ListDirTool, args: Table[string, JsonNode]): Future[string] {.async.} =
   let path = if args.hasKey("path"): args["path"].getStr() else: "."
   try:
+    let safePath = validatePath(path)
     var result = ""
-    for kind, entry in walkDir(path):
+    for kind, entry in walkDir(safePath):
       if kind == pcDir or kind == pcLinkToDir:
         result.add("DIR:  " & lastPathPart(entry) & "\n")
       else:
         result.add("FILE: " & lastPathPart(entry) & "\n")
     return result
+  except ValidationError as e:
+    return "Error: " & e.msg
   except CatchableError as e:
     return "Error: failed to read directory: " & e.msg
