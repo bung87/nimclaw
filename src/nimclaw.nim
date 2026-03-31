@@ -27,6 +27,7 @@ proc createWorkspaceTemplates(workspace: string) =
     writeFile(workspace / "memory" / "MEMORY.md", "# Long-term Memory\n")
 
 proc onboard() =
+  initLogger()
   let configPath = getConfigPath()
   if fileExists(configPath):
     stdout.write "Overwrite? (y/n): "
@@ -41,6 +42,7 @@ proc onboard() =
   echo logo, " picoclaw is ready!"
 
 proc agent(message = "", session = "cli:default") =
+  initLogger()
   let cfg = loadConfig(getConfigPath())
   let agentLoop = newAgentLoop(cfg, newMessageBus(), createProvider(cfg))
   if message != "": echo logo, " ", waitFor agentLoop.processDirect(message, session)
@@ -53,6 +55,7 @@ proc agent(message = "", session = "cli:default") =
       echo "\n", logo, " ", waitFor agentLoop.processDirect(input, session), "\n"
 
 proc gateway() =
+  initLogger()
   let cfg = loadConfig(getConfigPath())
   let msgBus = newMessageBus()
   let agentLoop = newAgentLoop(cfg, msgBus, createProvider(cfg))
