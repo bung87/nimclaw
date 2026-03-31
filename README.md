@@ -153,3 +153,24 @@ To use a specific skill, simply ask the agent to use it:
 You: Use the pm-product-strategy skill to analyze my product idea
 Agent: [reads the skill files and applies the methodology]
 ```
+
+### Installing Specific Skills from Monorepos
+
+Some repos contain multiple skills in subdirectories (e.g., `phuryn/pm-skills`). Since GitHub API has rate limits, install specific skills like this:
+
+```bash
+# Install a specific skill from a subdirectory
+./nimclaw skills --install phuryn/pm-skills/pm-product-strategy
+./nimclaw skills --install phuryn/pm-skills/pm-data-analytics
+```
+
+Or clone the repo manually and install from local path:
+
+```bash
+# Clone the entire skills repo
+git clone https://github.com/phuryn/pm-skills.git /tmp/pm-skills
+
+# Install individual skills from local path
+./nimclaw skills --from_path /tmp/pm-skills/pm-product-strategy
+./nimclaw skills --from_path /tmp/pm-skills/pm-data-analytics
+```

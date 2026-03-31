@@ -40,16 +40,15 @@ proc downloadFile(url, destPath: string) =
   let content = httpGet(url)
   writeFile(destPath, content)
 
-proc downloadDirectoryFromRaw(owner, repo, path, branch, destDir: string) =
-  ## Download directory using raw GitHub URLs and HTML parsing
-  ## Fallback when API rate limit is hit
+proc downloadDirectoryFromRaw(si: SkillInstaller, owner, repo, path, branch, destDir: string) =
+  ## Download directory using raw GitHub URLs
+  ## Fallback when API rate limit is hit - only works for single-file skills
   createDir(destDir)
   
-  # Try to get directory listing from GitHub's HTML interface
-  let htmlUrl = "https://github.com/" & owner & "/" & repo & "/tree/" & branch & "/" & path
-  
-  # For now, just try common skill files
   let baseRawUrl = "https://raw.githubusercontent.com/" & owner & "/" & repo & "/" & branch & "/" & path
+  
+  if si.verbose:
+    echo "  Raw URL fallback: " & baseRawUrl
   
   # Try to download README.md or SKILL.md
   var found = false
@@ -58,12 +57,14 @@ proc downloadDirectoryFromRaw(owner, repo, path, branch, destDir: string) =
       let content = httpGet(baseRawUrl & "/" & filename)
       writeFile(destDir / "SKILL.md", content)
       found = true
+      if si.verbose:
+        echo "  Downloaded: " & filename & " (saved as SKILL.md)"
       break
     except:
       continue
   
   if not found:
-    raise newException(IOError, "Could not find SKILL.md or README.md at " & baseRawUrl)
+    raise newException(IOError, "Could not find SKILL.md or README.md at " & baseRawUrl & ".\n\nNote: When GitHub API rate limit is exceeded, only single-file skills can be downloaded.\nFor repos with multiple skills in subdirectories, either:\n  1. Wait and retry later\n  2. Use: --install owner/repo/subdir (specific skill path)\n  3. Clone manually: git clone https://github.com/" & owner & "/" & repo & " && ./nimclaw skills --from_path ./" & repo & "/<skill-name>")
 
 proc listDirectoryContents(owner, repo, path, branch: string): seq[tuple[name, typeName, url: string]] =
   ## List contents of a directory via GitHub API
@@ -102,7 +103,7 @@ proc downloadDirectory(si: SkillInstaller, owner, repo, path, branch, destDir: s
     # API failed (rate limit?) - fallback to raw URLs
     if si.verbose:
       echo "  API failed, using raw URL fallback: " & e.msg
-    downloadDirectoryFromRaw(owner, repo, path, branch, destDir)
+    downloadDirectoryFromRaw(si, owner, repo, path, branch, destDir)
     return
   
   if contents.len == 0:
