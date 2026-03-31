@@ -1,8 +1,7 @@
-import std/[asyncdispatch, httpclient, json, strutils, tables, os, times, options]
-import regex
+import std/[asyncdispatch, httpclient, json, strutils, tables, os]
+import pkg/regex except re
 import base
-import ../bus, ../bus_types, ../config, ../logger, ../utils, ../services/voice
-import jsony
+import ../bus, ../bus_types, ../config, ../logger, ../services/voice
 
 type
   TelegramChannel* = ref object of BaseChannel
@@ -18,12 +17,12 @@ proc markdownToTelegramHTML(text: string): string =
   var res = text
   res = res.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
   # Very basic regex based replacements for bold, italic etc.
-  res = res.replace(re"\[([^\]]+)\]\(([^)]+)\)", "<a href=\"$2\">$1</a>")
-  res = res.replace(re"\*\*(.+?)\*\*", "<b>$1</b>")
-  res = res.replace(re"__(.+?)__", "<b>$1</b>")
-  res = res.replace(re"_([^_]+)_", "<i>$1</i>")
-  res = res.replace(re"~~(.+?)~~", "<s>$1</s>")
-  res = res.replace(re"(?m)^[-*]\s+", "• ")
+  res = res.replace(re2("\\[([^\\]]+)\\]\\(([^)]+)\\)"), "<a href=\"$2\">$1</a>")
+  res = res.replace(re2("\\*\\*(.+?)\\*\\*"), "<b>$1</b>")
+  res = res.replace(re2("__(.+?)__"), "<b>$1</b>")
+  res = res.replace(re2("_([^_]+)_"), "<i>$1</i>")
+  res = res.replace(re2("~~(.+?)~~"), "<s>$1</s>")
+  res = res.replace(re2("(?m)^[-*]\\s+"), "• ")
   return res
 
 proc newTelegramChannel*(cfg: TelegramConfig, bus: MessageBus): TelegramChannel =

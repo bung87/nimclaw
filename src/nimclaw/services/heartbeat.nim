@@ -1,4 +1,4 @@
-import std/[os, times, strutils, tables, locks, asyncdispatch]
+import std/[os, times, strutils, locks, asyncdispatch]
 
 type
   HeartbeatService* = ref object

@@ -1,13 +1,13 @@
-import std/[os, osproc, json, asyncdispatch, tables, strutils, times, streams]
-import regex
+import std/[os, osproc, asyncdispatch, tables, strutils, times, streams, json]
+import pkg/regex except re
 import types
 
 type
   ExecTool* = ref object of Tool
     workingDir*: string
     timeout*: Duration
-    denyPatterns*: seq[Regex]
-    allowPatterns*: seq[Regex]
+    denyPatterns*: seq[Regex2]
+    allowPatterns*: seq[Regex2]
     restrictToWorkspace*: bool
 
 proc newExecTool*(workingDir: string): ExecTool =
@@ -21,9 +21,9 @@ proc newExecTool*(workingDir: string): ExecTool =
     r"\b(shutdown|reboot|poweroff)\b",
     r":\(\)\s*\{.*\};\s*:"
   ]
-  var denyPatterns: seq[Regex] = @[]
+  var denyPatterns: seq[Regex2] = @[]
   for p in denyPatternsStrings:
-    denyPatterns.add(re(p))
+    denyPatterns.add(re2(p))
 
   ExecTool(
     workingDir: workingDir,

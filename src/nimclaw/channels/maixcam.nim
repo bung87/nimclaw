@@ -1,6 +1,6 @@
 import std/[asyncdispatch, asyncnet, json, tables, strutils, locks]
 import base
-import ../bus, ../bus_types, ../config, ../logger, ../utils
+import ../bus, ../bus_types, ../config, ../logger
 
 type
   MaixCamChannel* = ref object of BaseChannel

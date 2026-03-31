@@ -1,5 +1,5 @@
 import std/[asyncdispatch, httpclient, json, strutils, os, tables, times]
-import ../logger, ../utils
+import ../logger
 
 type
   TranscriptionResponse* = object

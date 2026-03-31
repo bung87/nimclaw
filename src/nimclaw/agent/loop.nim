@@ -1,4 +1,4 @@
-import std/[os, json, strutils, asyncdispatch, tables, syncio, times, locks]
+import std/[os, json, strutils, asyncdispatch, tables, locks]
 import ../bus, ../bus_types, ../config, ../logger, ../providers/types as providers_types, ../session, ../utils
 import context as agent_context
 import ../tools/registry as tools_registry

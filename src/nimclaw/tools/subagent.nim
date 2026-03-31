@@ -1,5 +1,4 @@
 import std/[asyncdispatch, tables, locks, times, json, strutils]
-import types
 import ../providers/types as providers_types
 import ../bus
 import ../bus_types

@@ -1,0 +1,11 @@
+*
+!**/
+!*.*
+
+# Cache
+nimcache*/
+rnimcache*/
+dnimcache*/
+
+testresults/
+~

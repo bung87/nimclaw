@@ -1,4 +1,4 @@
-import std/[os, strutils, json, re, tables]
+import std/[os, strutils]
 
 type
   SkillMetadata* = object

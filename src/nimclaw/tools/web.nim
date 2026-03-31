@@ -1,5 +1,5 @@
-import std/[os, json, asyncdispatch, httpclient, tables, strutils, uri, times]
-import regex
+import std/[json, asyncdispatch, httpclient, tables, strutils, uri]
+import pkg/regex except re
 import types
 
 const userAgent = "Mozilla/5.0 (compatible; nimclaw/1.0)"
@@ -102,12 +102,12 @@ method parameters*(t: WebFetchTool): Table[string, JsonNode] =
   }.toTable
 
 proc extractText(html: string): string =
-  var result = html
-  result = result.replace(re"(?s)<script[\s\S]*?<\/script>", "")
-  result = result.replace(re"(?s)<style[\s\S]*?<\/style>", "")
-  result = result.replace(re"<[^>]+>", "")
-  result = result.replace(re"\s+", " ")
-  return result.strip()
+  var content = html
+  content = content.replace(re2("(?s)<script[\\s\\S]*?<\\/script>"), "")
+  content = content.replace(re2("(?s)<style[\\s\\S]*?<\\/style>"), "")
+  content = content.replace(re2("<[^>]+>"), "")
+  content = content.replace(re2("\\s+"), " ")
+  return content.strip()
 
 method execute*(t: WebFetchTool, args: Table[string, JsonNode]): Future[string] {.async.} =
   if not args.hasKey("url"): return "Error: url is required"

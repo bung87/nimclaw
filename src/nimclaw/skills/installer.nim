@@ -1,4 +1,4 @@
-import std/[asyncdispatch, httpclient, os, json, strutils, tables]
+import std/[asyncdispatch, httpclient, os, json, strutils]
 
 type
   AvailableSkill* = object

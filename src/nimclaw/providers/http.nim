@@ -1,4 +1,4 @@
-import std/[asyncdispatch, json, strutils, tables, options], httpclient
+import std/[asyncdispatch, json, strutils, tables], httpclient
 import types
 import ../config as claw_config
 

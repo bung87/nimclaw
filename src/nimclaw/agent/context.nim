@@ -74,12 +74,12 @@ $4
 
 proc loadBootstrapFiles(cb: ContextBuilder): string =
   let bootstrapFiles = ["AGENTS.md", "SOUL.md", "USER.md", "IDENTITY.md"]
-  var result = ""
+  var content = ""
   for filename in bootstrapFiles:
     let filePath = cb.workspace / filename
     if fileExists(filePath):
-      result.add("## $1\n\n$2\n\n".format(filename, readFile(filePath)))
-  return result
+      content.add("## $1\n\n$2\n\n".format(filename, readFile(filePath)))
+  return content
 
 proc buildSystemPrompt*(cb: ContextBuilder): string =
   var parts: seq[string] = @[]

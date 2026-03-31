@@ -1,4 +1,4 @@
-import std/[os, json, times, strutils, tables, locks, asyncdispatch, options, sequtils]
+import std/[os, times, strutils, locks, asyncdispatch, options, sequtils]
 import jsony
 
 type

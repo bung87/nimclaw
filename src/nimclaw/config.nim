@@ -1,4 +1,4 @@
-import std/[os, json, strutils, tables]
+import std/[os, strutils]
 import jsony
 
 type

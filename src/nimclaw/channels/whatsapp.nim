@@ -1,7 +1,7 @@
-import std/[asyncdispatch, tables, strutils, json, locks]
+import std/[asyncdispatch, tables, strutils, json]
 import ws
 import base
-import ../bus, ../bus_types, ../config, ../logger, ../utils
+import ../bus, ../bus_types, ../config, ../logger
 
 type
   WhatsAppChannel* = ref object of BaseChannel
