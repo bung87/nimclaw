@@ -27,7 +27,7 @@ method execute*(t: ReadFileTool, args: Table[string, JsonNode]): Future[string] 
   let path = args["path"].getStr()
   try:
     return readFile(path)
-  except Exception as e:
+  except CatchableError as e:
     return "Error: failed to read file: " & e.msg
 
 # WriteFileTool
@@ -60,7 +60,7 @@ method execute*(t: WriteFileTool, args: Table[string, JsonNode]): Future[string]
       createDir(dir)
     writeFile(path, content)
     return "File written successfully"
-  except Exception as e:
+  except CatchableError as e:
     return "Error: failed to write file: " & e.msg
 
 # ListDirTool
@@ -88,5 +88,5 @@ method execute*(t: ListDirTool, args: Table[string, JsonNode]): Future[string] {
       else:
         result.add("FILE: " & lastPathPart(entry) & "\n")
     return result
-  except Exception as e:
+  except CatchableError as e:
     return "Error: failed to read directory: " & e.msg

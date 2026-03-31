@@ -34,7 +34,7 @@ method parameters*(t: SpawnTool): Table[string, JsonNode] =
     "required": %["task"]
   }.toTable
 
-method setContext*(t: SpawnTool, channel, chatID: string) =
+method setContext*(t: SpawnTool, channel, chatID: string) {.raises: [].} =
   t.originChannel = channel
   t.originChatID = chatID
 
@@ -44,6 +44,6 @@ method execute*(t: SpawnTool, args: Table[string, JsonNode]): Future[string] {.a
   let label = if args.hasKey("label"): args["label"].getStr() else: ""
 
   if t.manager == nil:
-    return "Error: Subagent manager not configured"
+    raise newException(ValueError, "Subagent manager not configured")
 
   return t.manager.spawn(task, label, t.originChannel, t.originChatID)

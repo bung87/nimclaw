@@ -35,7 +35,7 @@ method parameters*(t: MessageTool): Table[string, JsonNode] =
     "required": %["content"]
   }.toTable
 
-method setContext*(t: MessageTool, channel, chatID: string) =
+method setContext*(t: MessageTool, channel, chatID: string) {.raises: [].} =
   t.defaultChannel = channel
   t.defaultChatID = chatID
 
@@ -56,10 +56,10 @@ method execute*(t: MessageTool, args: Table[string, JsonNode]): Future[string] {
     return "Error: No target channel/chat specified"
 
   if t.sendCallback == nil:
-    return "Error: Message sending not configured"
+    raise newException(ValueError, "Message sending not configured")
 
   try:
     await t.sendCallback(channel, chatID, content)
     return "Message sent to $1:$2".format(channel, chatID)
-  except Exception as e:
+  except CatchableError as e:
     return "Error sending message: " & e.msg

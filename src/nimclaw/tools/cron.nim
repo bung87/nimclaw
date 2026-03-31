@@ -64,7 +64,7 @@ method parameters*(t: CronTool): Table[string, JsonNode] =
     "required": %["action"]
   }.toTable
 
-method setContext*(t: CronTool, channel, chatID: string) =
+method setContext*(t: CronTool, channel, chatID: string) {.raises: [].} =
   acquire(t.lock)
   t.channel = channel
   t.chatID = chatID
@@ -102,7 +102,7 @@ proc addJob(t: CronTool, args: Table[string, JsonNode]): Future[string] {.async.
   try:
     let job = await t.cronService.addJob(messagePreview, schedule, message, deliver, channel, chatID)
     return strutils.format("Created job '$1' (id: $2)", job.name, job.id)
-  except Exception as e:
+  except CatchableError as e:
     return "Error adding job: " & e.msg
 
 method execute*(t: CronTool, args: Table[string, JsonNode]): Future[string] {.async.} =

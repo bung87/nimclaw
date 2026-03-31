@@ -21,7 +21,7 @@ proc newMessageBus*(): MessageBus =
   initLock(bus.lock)
   return bus
 
-proc publishInbound*(bus: MessageBus, msg: InboundMessage) =
+proc publishInbound*(bus: MessageBus, msg: InboundMessage) {.raises: [].} =
   acquire(bus.lock)
   if bus.inboundWaiters.len > 0:
     let waiter = bus.inboundWaiters[0]
@@ -45,7 +45,7 @@ proc consumeInbound*(bus: MessageBus): Future[InboundMessage] {.async.} =
     release(bus.lock)
     return await fut
 
-proc publishOutbound*(bus: MessageBus, msg: OutboundMessage) =
+proc publishOutbound*(bus: MessageBus, msg: OutboundMessage) {.raises: [].} =
   acquire(bus.lock)
   if bus.outboundWaiters.len > 0:
     let waiter = bus.outboundWaiters[0]
@@ -69,7 +69,7 @@ proc subscribeOutbound*(bus: MessageBus): Future[OutboundMessage] {.async.} =
     release(bus.lock)
     return await fut
 
-proc registerHandler*(bus: MessageBus, channel: string, handler: MessageHandler) =
+proc registerHandler*(bus: MessageBus, channel: string, handler: MessageHandler) {.raises: [].} =
   acquire(bus.lock)
   bus.handlers[channel] = handler
   release(bus.lock)
@@ -82,6 +82,6 @@ proc getHandler*(bus: MessageBus, channel: string): (MessageHandler, bool) =
   else:
     return (nil, false)
 
-proc close*(bus: MessageBus) =
+proc close*(bus: MessageBus) {.raises: [].} =
   # In a real implementation we'd probably fail all pending waiters
   discard

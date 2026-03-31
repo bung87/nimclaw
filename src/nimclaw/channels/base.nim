@@ -6,13 +6,13 @@ import ../services/voice
 type
   Channel* = ref object of RootObj
 
-method name*(c: Channel): string {.base.} = ""
+method name*(c: Channel): string {.base, raises: [].} = ""
 method start*(c: Channel): Future[void] {.base, async.} = discard
 method stop*(c: Channel): Future[void] {.base, async.} = discard
 method send*(c: Channel, msg: OutboundMessage): Future[void] {.base, async.} = discard
-method isRunning*(c: Channel): bool {.base.} = false
-method isAllowed*(c: Channel, senderID: string): bool {.base.} = true
-method setTranscriber*(c: Channel, transcriber: GroqTranscriber) {.base.} = discard
+method isRunning*(c: Channel): bool {.base, raises: [].} = false
+method isAllowed*(c: Channel, senderID: string): bool {.base, raises: [].} = true
+method setTranscriber*(c: Channel, transcriber: GroqTranscriber) {.base, raises: [].} = discard
 
 type
   BaseChannel* = ref object of Channel
@@ -32,13 +32,13 @@ proc newBaseChannel*(name: string, bus: MessageBus, allowList: seq[string]): Bas
 method name*(c: BaseChannel): string = c.name
 method isRunning*(c: BaseChannel): bool = c.running
 
-method isAllowed*(c: BaseChannel, senderID: string): bool =
+method isAllowed*(c: BaseChannel, senderID: string): bool {.raises: [].} =
   if c.allowList.len == 0: return true
   for allowed in c.allowList:
     if senderID == allowed: return true
   return false
 
-proc handleMessage*(c: BaseChannel, senderID, chatID, content: string, media: seq[string] = @[], metadata: Table[string, string] = initTable[string, string]()) =
+proc handleMessage*(c: BaseChannel, senderID, chatID, content: string, media: seq[string] = @[], metadata: Table[string, string] = initTable[string, string]()) {.raises: [].} =
   if not c.isAllowed(senderID): return
 
   let sessionKey = c.name & ":" & chatID

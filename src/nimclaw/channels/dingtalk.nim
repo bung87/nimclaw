@@ -53,7 +53,7 @@ proc dingtalkGatewayLoop(c: DingTalkChannel) {.async.} =
 
         infoCF("dingtalk", "Received message", {"sender": senderID}.toTable)
         c.handleMessage(senderID, chatID, content)
-    except Exception as e:
+    except CatchableError as e:
       errorCF("dingtalk", "Gateway error", {"error": e.msg}.toTable)
       await sleepAsync(5000)
 

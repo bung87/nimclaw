@@ -59,7 +59,7 @@ proc runLoop(hs: HeartbeatService) {.async.} =
     if hs.onHeartbeat != nil:
       try:
         await hs.onHeartbeat(prompt)
-      except Exception as e:
+      except CatchableError as e:
         hs.log("Heartbeat error: " & e.msg)
 
 proc start*(hs: HeartbeatService) {.async.} =

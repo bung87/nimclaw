@@ -44,5 +44,5 @@ type
 method chat*(p: LLMProvider, messages: seq[Message], tools: seq[ToolDefinition], model: string, options: Table[string, JsonNode]): Future[LLMResponse] {.base, async.} =
   discard
 
-method getDefaultModel*(p: LLMProvider): string {.base, gcsafe.} =
+method getDefaultModel*(p: LLMProvider): string {.base, gcsafe, raises: [].} =
   return ""

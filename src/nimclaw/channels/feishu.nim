@@ -98,7 +98,7 @@ proc feishuGatewayLoop(c: FeishuChannel) {.async.} =
           infoCF("feishu", "Received message", {"sender": senderID}.toTable)
           c.handleMessage(senderID, chatID, content)
 
-    except Exception as e:
+    except CatchableError as e:
       errorCF("feishu", "Gateway error", {"error": e.msg}.toTable)
       await sleepAsync(5000)
 

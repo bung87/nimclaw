@@ -62,7 +62,7 @@ method execute*(t: EditFileTool, args: Table[string, JsonNode]): Future[string] 
     let newContent = content.replace(oldText, newText)
     writeFile(resolvedPath, newContent)
     return "Successfully edited " & path
-  except Exception as e:
+  except CatchableError as e:
     return "Error: failed to edit file: " & e.msg
 
 type
@@ -101,5 +101,5 @@ method execute*(t: AppendFileTool, args: Table[string, JsonNode]): Future[string
     f.write(content)
     f.close()
     return "Successfully appended to " & path
-  except Exception as e:
+  except CatchableError as e:
     return "Error: failed to append to file: " & e.msg

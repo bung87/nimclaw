@@ -159,7 +159,7 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
     var toolDefs: seq[ToolDefinition] = @[]
     try:
       toolDefs = al.tools.getDefinitions()
-    except Exception as e:
+    except CatchableError as e:
       errorCF("agent", "Failed to get tool definitions", {"error": e.msg}.toTable)
     let response = await al.provider.chat(currentMessages, toolDefs, al.model, initTable[string, JsonNode]())
 
@@ -172,15 +172,23 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
     currentMessages.add(assistantMsg)
     al.sessions.addFullMessage(opts.sessionKey, assistantMsg)
 
+    var allToolErrors: seq[string] = @[]
     for tc in response.tool_calls:
       if tc.name == "":
         warnCF("agent", "Skipping tool call with empty name", {"iteration": $iteration}.toTable)
         continue
       infoCF("agent", "Tool call: " & tc.name, {"tool": tc.name, "iteration": $iteration}.toTable)
       let result = await al.tools.executeWithContext(tc.name, tc.arguments, opts.channel, opts.chatID)
+      if result.startsWith("Error: "):
+        allToolErrors.add(tc.name & ": " & result)
       let toolResultMsg = providers_types.Message(role: "tool", content: result, tool_call_id: tc.id)
       currentMessages.add(toolResultMsg)
       al.sessions.addFullMessage(opts.sessionKey, toolResultMsg)
+    
+    # If all tools failed, return error directly to user
+    if allToolErrors.len > 0 and allToolErrors.len == response.tool_calls.len:
+      finalContent = allToolErrors.join("\n")
+      break
 
   return (finalContent, iteration, currentMessages)
 
@@ -190,7 +198,7 @@ proc runAgentLoop*(al: AgentLoop, opts: ProcessOptions): Future[string] {.async.
   var messages: seq[providers_types.Message] = @[]
   try:
     messages = al.contextBuilder.buildMessages(history, summary, opts.userMessage, opts.channel, opts.chatID)
-  except Exception as e:
+  except CatchableError as e:
     errorCF("agent", "Failed to build messages", {"error": e.msg}.toTable)
 
   al.sessions.addMessage(opts.sessionKey, "user", opts.userMessage)
@@ -227,7 +235,7 @@ proc processMessage*(al: AgentLoop, msg: InboundMessage): Future[string] {.async
     let (toolCron, okCron) = al.tools.get("cron")
     if okCron:
       if toolCron of CronTool: cast[CronTool](toolCron).setContext(msg.channel, msg.chat_id)
-  except Exception:
+  except CatchableError:
     discard
 
   if msg.channel == "system":
@@ -239,7 +247,7 @@ proc processMessage*(al: AgentLoop, msg: InboundMessage): Future[string] {.async
     channel: msg.channel,
     chatID: msg.chat_id,
     userMessage: msg.content,
-    defaultResponse: "I've completed processing but have no response to give.",
+    defaultResponse: "I have no response to give.",
     enableSummary: true,
     sendResponse: false
   ))

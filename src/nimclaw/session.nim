@@ -58,7 +58,7 @@ proc newSessionManager*(storage: string, maxSessions: int = MAX_SESSION_COUNT): 
             discard
           continue
         result.sessions[session.key] = session
-      except Exception as e:
+      except CatchableError as e:
         # Log error but continue loading other sessions
         discard
 

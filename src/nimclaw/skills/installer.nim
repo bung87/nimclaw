@@ -57,7 +57,7 @@ proc installFromGitHub*(si: SkillInstaller, repo: string): Future[void] {.async.
       createDir(si.workspace / "skills")
     createDir(skillDir)
     writeFile(skillDir / "SKILL.md", body)
-  except Exception as e:
+  except CatchableError as e:
     raise newException(IOError, "Failed to install skill: " & e.msg)
 
 proc uninstall*(si: SkillInstaller, skillName: string) =
@@ -89,5 +89,5 @@ proc listAvailableSkills*(si: SkillInstaller): Future[seq[AvailableSkill]] {.asy
       raise newException(IOError, "Failed to fetch skills list: " & $response.status)
 
     return parseJson(body).to(seq[AvailableSkill])
-  except Exception as e:
+  except CatchableError as e:
     raise newException(IOError, "Failed to list skills: " & e.msg)

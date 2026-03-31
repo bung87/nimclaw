@@ -44,7 +44,7 @@ proc getSummaries*(r: ToolRegistry): seq[string] =
   for tool in r.tools.values:
     result.add("- `" & tool.name() & "` - " & tool.description())
 
-proc toolToSchema*(tool: Tool): ToolDefinition =
+proc toolToSchema*(tool: Tool): ToolDefinition {.raises: [].} =
   ToolDefinition(
     `type`: "function",
     function: ToolFunctionDefinition(
@@ -54,7 +54,7 @@ proc toolToSchema*(tool: Tool): ToolDefinition =
     )
   )
 
-proc getDefinitions*(r: ToolRegistry): seq[ToolDefinition] =
+proc getDefinitions*(r: ToolRegistry): seq[ToolDefinition] {.raises: [].} =
   acquire(r.lock)
   defer: release(r.lock)
   for tool in r.tools.values:
@@ -71,14 +71,14 @@ proc executeWithContext*(r: ToolRegistry, name: string, args: Table[string, Json
   if tool of ContextualTool and channel != "" and chatID != "":
     try:
       (cast[ContextualTool](tool)).setContext(channel, chatID)
-    except Exception:
+    except CatchableError:
       discard
 
   let start = now()
   var result = ""
   try:
     result = await tool.execute(args)
-  except Exception as e:
+  except CatchableError as e:
     let duration = (now() - start).inMilliseconds
     errorCF("tool", "Tool execution failed", {"tool": name, "duration": $duration, "error": e.msg}.toTable)
     return "Error: " & e.msg

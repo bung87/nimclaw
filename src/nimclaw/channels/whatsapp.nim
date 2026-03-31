@@ -37,7 +37,7 @@ proc listen(c: WhatsAppChannel) {.async.} =
         if msg.hasKey("from_name"): metadata["user_name"] = msg["from_name"].getStr()
 
         c.handleMessage(senderID, chatID, content, @[], metadata)
-    except Exception as e:
+    except CatchableError as e:
       errorCF("whatsapp", "WhatsApp read error", {"error": e.msg}.toTable)
       await sleepAsync(2000)
 
@@ -56,7 +56,7 @@ method start*(c: WhatsAppChannel) {.async.} =
     c.running = true
     discard listen(c)
     infoC("whatsapp", "WhatsApp channel connected")
-  except Exception as e:
+  except CatchableError as e:
     errorCF("whatsapp", "Failed to connect to WhatsApp bridge", {"error": e.msg}.toTable)
 
 method stop*(c: WhatsAppChannel) {.async.} =
@@ -71,7 +71,7 @@ method send*(c: WhatsAppChannel, msg: OutboundMessage) {.async.} =
   let payload = %*{"type": "message", "to": msg.chat_id, "content": msg.content}
   try:
     await c.conn.send($payload)
-  except Exception as e:
+  except CatchableError as e:
     errorCF("whatsapp", "Failed to send WhatsApp message", {"error": e.msg}.toTable)
 
 method isRunning*(c: WhatsAppChannel): bool = c.running

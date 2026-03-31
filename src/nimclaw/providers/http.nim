@@ -19,7 +19,7 @@ proc newHTTPProvider*(apiKey, apiBase: string): HTTPProvider =
     session: session
   )
 
-method getDefaultModel*(p: HTTPProvider): string =
+method getDefaultModel*(p: HTTPProvider): string {.raises: [].} =
   return ""
 
 method chat*(p: HTTPProvider, messages: seq[Message], tools: seq[ToolDefinition], model: string, options: Table[string, JsonNode]): Future[LLMResponse] {.async.} =

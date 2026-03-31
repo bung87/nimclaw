@@ -36,7 +36,7 @@ method parameters*(t: WebSearchTool): Table[string, JsonNode] =
   }.toTable
 
 method execute*(t: WebSearchTool, args: Table[string, JsonNode]): Future[string] {.async.} =
-  if t.apiKey == "": return "Error: BRAVE_API_KEY not configured"
+  if t.apiKey == "": raise newException(ValueError, "BRAVE_API_KEY not configured")
   if not args.hasKey("query"): return "Error: query is required"
   let query = args["query"].getStr()
   var count = t.maxResults

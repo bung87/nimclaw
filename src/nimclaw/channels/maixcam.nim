@@ -66,7 +66,7 @@ proc handleClient(c: MaixCamChannel, transp: StreamTransport) {.async.} =
       else:
         warnCF("maixcam", "Unknown message type", {"type": msgType}.toTable)
 
-    except Exception as e:
+    except CatchableError as e:
       errorCF("maixcam", "Failed to handle client", {"error": e.msg}.toTable)
       break
 
@@ -94,7 +94,7 @@ method start*(c: MaixCamChannel) {.async.} =
     c.server.start()
     c.running = true
     infoCF("maixcam", "MaixCam server listening", {"host": c.host, "port": $c.port}.toTable)
-  except Exception as e:
+  except CatchableError as e:
     errorCF("maixcam", "Failed to start MaixCam server", {"error": e.msg}.toTable)
 
 method stop*(c: MaixCamChannel) {.async.} =

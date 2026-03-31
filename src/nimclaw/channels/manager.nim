@@ -53,7 +53,7 @@ proc dispatchOutbound(m: Manager) {.async.} =
       let channel = m.channels[msg.channel]
       try:
         await channel.send(msg)
-      except Exception as e:
+      except CatchableError as e:
         errorCF("channels", "Error sending message to channel", {"channel": msg.channel, "error": e.msg}.toTable)
     else:
       warnCF("channels", "Unknown channel for outbound message", {"channel": msg.channel}.toTable)
@@ -70,7 +70,7 @@ proc startAll*(m: Manager) {.async.} =
     infoCF("channels", "Starting channel", {"channel": name}.toTable)
     try:
       await channel.start()
-    except Exception as e:
+    except CatchableError as e:
       errorCF("channels", "Failed to start channel", {"channel": name, "error": e.msg}.toTable)
 
 proc stopAll*(m: Manager) {.async.} =
@@ -79,7 +79,7 @@ proc stopAll*(m: Manager) {.async.} =
     infoCF("channels", "Stopping channel", {"channel": name}.toTable)
     try:
       await channel.stop()
-    except Exception as e:
+    except CatchableError as e:
       errorCF("channels", "Error stopping channel", {"channel": name, "error": e.msg}.toTable)
 
 proc getEnabledChannels*(m: Manager): seq[string] =

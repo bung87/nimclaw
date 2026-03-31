@@ -103,7 +103,7 @@ proc gatewayLoop(c: DiscordChannel) {.async.} =
           let content = d["content"].getStr()
           c.handleMessage(senderID, chatID, content)
 
-    except Exception as e:
+    except CatchableError as e:
       errorCF("discord", "Gateway error", {"error": e.msg}.toTable)
       await sleepAsync(5000)
 
@@ -125,7 +125,7 @@ method start*(c: DiscordChannel) {.async.} =
     c.ws = await WebSocket.connect(gatewayHost, gatewayPath, secure = true)
     c.running = true
     discard gatewayLoop(c)
-  except Exception as e:
+  except CatchableError as e:
     errorCF("discord", "Failed to start Discord bot", {"error": e.msg}.toTable)
 
 method stop*(c: DiscordChannel) {.async.} =

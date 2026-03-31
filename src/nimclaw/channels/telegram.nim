@@ -184,7 +184,7 @@ proc handleTelegramUpdate(c: TelegramChannel, update: JsonNode) {.async.} =
 
   try:
     c.handleMessage(senderID, chatID, content, mediaPaths)
-  except Exception as e:
+  except CatchableError as e:
     errorCF("telegram", "Failed to handle message", {"error": e.msg}.toTable)
 
 proc poll(c: TelegramChannel) {.async.} =
@@ -195,7 +195,7 @@ proc poll(c: TelegramChannel) {.async.} =
         for update in res["result"]:
           c.lastUpdateID = update["update_id"].getInt()
           discard handleTelegramUpdate(c, update)
-    except Exception as e:
+    except CatchableError as e:
       errorCF("telegram", "Polling error", {"error": e.msg}.toTable)
       await sleepAsync(5000)
 

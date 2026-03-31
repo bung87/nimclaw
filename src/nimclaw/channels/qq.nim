@@ -115,7 +115,7 @@ proc qqGatewayLoop(c: QQChannel) {.async.} =
           infoCF("qq", "Received message", {"type": t, "sender": senderID}.toTable)
           c.handleMessage(senderID, chatID, content)
 
-    except Exception as e:
+    except CatchableError as e:
       errorCF("qq", "Gateway error", {"error": e.msg}.toTable)
       await sleepAsync(5000)
 

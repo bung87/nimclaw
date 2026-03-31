@@ -49,7 +49,7 @@ proc runTask*(sm: SubagentManager, task: SubagentTask) {.async.} =
     task.status = "completed"
     task.result = response.content
     release(sm.lock)
-  except Exception as e:
+  except CatchableError as e:
     acquire(sm.lock)
     task.status = "failed"
     task.result = "Error: " & e.msg
