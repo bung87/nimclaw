@@ -4,6 +4,7 @@ type
   SkillInstaller* = ref object
     workspace*: string
     builtinSkillsDir*: string
+    verbose*: bool
 
 proc newSkillInstaller*(workspace: string): SkillInstaller =
   let builtinDir = getCurrentDir() / "skills"
@@ -62,28 +63,38 @@ proc listDirectoryContents(owner, repo, path, branch: string): seq[tuple[name, t
   except:
     discard
 
-proc downloadDirectory(owner, repo, path, branch, destDir: string) =
+proc downloadDirectory(si: SkillInstaller, owner, repo, path, branch, destDir: string) =
   ## Recursively download a directory from GitHub
   createDir(destDir)
+  
+  if si.verbose:
+    echo "  Listing: " & owner & "/" & repo & "/" & path & " (branch: " & branch & ")"
   
   let contents = listDirectoryContents(owner, repo, path, branch)
   
   if contents.len == 0:
     raise newException(IOError, "Could not list directory contents: " & owner & "/" & repo & "/" & path)
   
+  if si.verbose:
+    echo "  Found " & $contents.len & " items"
+  
   for item in contents:
     let destPath = destDir / item.name
     
     if item.typeName == "file":
       if item.url != "":
+        if si.verbose:
+          echo "  Downloading: " & item.name
         try:
           let content = rawGet(item.url)
           writeFile(destPath, content)
         except CatchableError as e:
           raise newException(IOError, "Failed to download " & item.name & ": " & e.msg)
     elif item.typeName == "dir":
+      if si.verbose:
+        echo "  Entering directory: " & item.name
       let subPath = if path != "": path & "/" & item.name else: item.name
-      downloadDirectory(owner, repo, subPath, branch, destPath)
+      downloadDirectory(si, owner, repo, subPath, branch, destPath)
 
 proc isLikelySkillDir(owner, repo, path, branch: string): bool =
   ## Check if directory contains skill files (SKILL.md or README.md)
@@ -125,7 +136,7 @@ proc installFromGitHub*(si: SkillInstaller, repo: string): string =
     if not dirExists(si.getWorkspaceSkillsDir()):
       createDir(si.getWorkspaceSkillsDir())
     
-    downloadDirectory(owner, repoName, subPath, branch, skillDir)
+    downloadDirectory(si, owner, repoName, subPath, branch, skillDir)
     return skillName
   
   # Check root for skill files
@@ -156,7 +167,7 @@ proc installFromGitHub*(si: SkillInstaller, repo: string): string =
     if not dirExists(si.getWorkspaceSkillsDir()):
       createDir(si.getWorkspaceSkillsDir())
     
-    downloadDirectory(owner, repoName, "", branch, skillDir)
+    downloadDirectory(si, owner, repoName, "", branch, skillDir)
     return skillName
   
   # No skill at root - try subdirectories
@@ -183,7 +194,7 @@ proc installFromGitHub*(si: SkillInstaller, repo: string): string =
       createDir(si.getWorkspaceSkillsDir())
     
     try:
-      downloadDirectory(owner, repoName, subdir, branch, skillDir)
+      downloadDirectory(si, owner, repoName, subdir, branch, skillDir)
       installed.add(subdir)
     except:
       errors.add(subdir & " (download failed)")

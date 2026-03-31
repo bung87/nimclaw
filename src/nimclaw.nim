@@ -98,11 +98,14 @@ proc cron(list = false, add = false, remove = "", enable = "", disable = "",
   elif disable != "": discard cs.enableJob(disable, false)
 
 proc skills(list = false, install = "", remove = "", show = "", create = "",
-            description = "", from_path = "") =
+            description = "", from_path = "", verbose = false) =
   let cfg = loadConfig(getConfigPath())
   let workspace = cfg.workspacePath()
   let installer = newSkillInstaller(workspace)
   let loader = newSkillsLoader(workspace, "", "")
+  
+  # Set verbose mode
+  installer.verbose = verbose
   
   if list:
     let installed = installer.listInstalledSkills()
