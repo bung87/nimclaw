@@ -1,93 +1,150 @@
-import chronos
-import chronos/apps/http/httpclient
-import std/[os, json, strutils]
+import std/[os, strutils, httpclient]
 
 type
-  AvailableSkill* = object
-    name*: string
-    repository*: string
-    description*: string
-    author*: string
-    tags*: seq[string]
-
-  BuiltinSkill* = object
-    name*: string
-    path*: string
-    enabled*: bool
-
   SkillInstaller* = ref object
     workspace*: string
-    session*: HttpSessionRef
+    builtinSkillsDir*: string
 
 proc newSkillInstaller*(workspace: string): SkillInstaller =
+  let builtinDir = getCurrentDir() / "skills"
   SkillInstaller(
     workspace: workspace,
-    session: HttpSessionRef.new()
+    builtinSkillsDir: builtinDir
   )
 
-proc installFromGitHub*(si: SkillInstaller, repo: string): Future[void] {.async.} =
-  let skillName = lastPathPart(repo)
-  let skillDir = si.workspace / "skills" / skillName
+proc getWorkspaceSkillsDir(si: SkillInstaller): string =
+  si.workspace / "skills"
+
+proc fetchFromGitHub(repo: string): string =
+  ## Fetch SKILL.md from GitHub repo
+  ## Format: owner/repo or owner/repo/path
+  let url = "https://raw.githubusercontent.com/" & repo & "/main/SKILL.md"
+  var client = newHttpClient()
+  try:
+    let response = client.get(url)
+    if response.code == Http200:
+      return response.body
+    # Try master branch if main fails
+    let urlMaster = "https://raw.githubusercontent.com/" & repo & "/master/SKILL.md"
+    let responseMaster = client.get(urlMaster)
+    if responseMaster.code == Http200:
+      return responseMaster.body
+    raise newException(IOError, "Failed to fetch skill from " & repo & " (HTTP " & $response.code & ")")
+  except:
+    raise newException(IOError, "Failed to fetch skill: " & getCurrentExceptionMsg())
+  finally:
+    client.close()
+
+proc installFromGitHub*(si: SkillInstaller, repo: string): string =
+  ## Install a skill from GitHub
+  ## repo format: "owner/repo" or "owner/repo/subdir"
+  let skillName = lastPathPart(repo.split('/')[1..^1].join("/"))
+  let skillDir = si.getWorkspaceSkillsDir() / skillName
 
   if dirExists(skillDir):
-    raise newException(IOError, "Skill '$1' already exists".format(skillName))
+    raise newException(IOError, "Skill '" & skillName & "' already exists")
 
-  let url = "https://raw.githubusercontent.com/$1/main/SKILL.md".format(repo)
+  let content = fetchFromGitHub(repo)
   
-  let addressRes = si.session.getAddress(url)
-  if addressRes.isErr:
-    raise newException(IOError, "Failed to resolve URL")
-  let address = addressRes.get()
+  if not dirExists(si.getWorkspaceSkillsDir()):
+    createDir(si.getWorkspaceSkillsDir())
+  createDir(skillDir)
+  writeFile(skillDir / "SKILL.md", content)
   
-  let request = HttpClientRequestRef.new(
-    si.session,
-    address,
-    meth = MethodGet
-  )
+  return skillName
 
-  try:
-    let response = await request.send()
-    let bodyBytes = await response.getBodyBytes()
-    let body = cast[string](bodyBytes)
-    
-    if response.status != 200:
-      raise newException(IOError, "Failed to fetch skill: " & $response.status)
+proc installFromPath*(si: SkillInstaller, sourcePath: string, skillName: string = ""): string =
+  ## Install a skill from a local path
+  let src = absolutePath(sourcePath)
+  let name = if skillName != "": skillName else: lastPathPart(src)
+  let destDir = si.getWorkspaceSkillsDir() / name
 
-    if not dirExists(si.workspace / "skills"):
-      createDir(si.workspace / "skills")
-    createDir(skillDir)
-    writeFile(skillDir / "SKILL.md", body)
-  except CatchableError as e:
-    raise newException(IOError, "Failed to install skill: " & e.msg)
+  if dirExists(destDir):
+    raise newException(IOError, "Skill '" & name & "' already exists")
+
+  if not dirExists(si.getWorkspaceSkillsDir()):
+    createDir(si.getWorkspaceSkillsDir())
+
+  if fileExists(src):
+    createDir(destDir)
+    copyFile(src, destDir / "SKILL.md")
+  elif dirExists(src):
+    copyDir(src, destDir)
+  else:
+    raise newException(IOError, "Source not found: " & sourcePath)
+
+  return name
+
+proc installBuiltin*(si: SkillInstaller, skillName: string): string =
+  ## Install a built-in skill
+  let builtinPath = si.builtinSkillsDir / skillName
+  if not dirExists(builtinPath):
+    raise newException(IOError, "Built-in skill '" & skillName & "' not found")
+  return si.installFromPath(builtinPath, skillName)
+
+proc createSkill*(si: SkillInstaller, skillName: string, description: string = ""): string =
+  ## Create a new skill with template
+  let skillDir = si.getWorkspaceSkillsDir() / skillName
+  
+  if dirExists(skillDir):
+    raise newException(IOError, "Skill '" & skillName & "' already exists")
+
+  if not dirExists(si.getWorkspaceSkillsDir()):
+    createDir(si.getWorkspaceSkillsDir())
+  
+  createDir(skillDir)
+  
+  let content = """---
+name: $1
+description: $2
+author: user
+tags: []
+---
+
+# $1
+
+Describe your skill here...
+
+## Usage
+
+Explain how to use this skill...
+""" % [skillName, if description != "": description else: "A custom skill"]
+
+  writeFile(skillDir / "SKILL.md", content)
+  return skillDir
 
 proc uninstall*(si: SkillInstaller, skillName: string) =
-  let skillDir = si.workspace / "skills" / skillName
+  let skillDir = si.getWorkspaceSkillsDir() / skillName
   if not dirExists(skillDir):
-    raise newException(IOError, "Skill '$1' not found".format(skillName))
+    raise newException(IOError, "Skill '" & skillName & "' not found")
   removeDir(skillDir)
 
-proc listAvailableSkills*(si: SkillInstaller): Future[seq[AvailableSkill]] {.async.} =
-  let url = "https://raw.githubusercontent.com/sipeed/picoclaw-skills/main/skills.json"
+proc listInstalledSkills*(si: SkillInstaller): seq[string] =
+  result = @[]
+  let skillsDir = si.getWorkspaceSkillsDir()
+  if not dirExists(skillsDir):
+    return result
   
-  let addressRes = si.session.getAddress(url)
-  if addressRes.isErr:
-    raise newException(IOError, "Failed to resolve URL")
-  let address = addressRes.get()
+  for kind, path in walkDir(skillsDir):
+    if kind == pcDir:
+      let skillFile = path / "SKILL.md"
+      if fileExists(skillFile):
+        result.add(lastPathPart(path))
+
+proc listBuiltinSkills*(si: SkillInstaller): seq[string] =
+  result = @[]
+  if not dirExists(si.builtinSkillsDir):
+    return result
   
-  let request = HttpClientRequestRef.new(
-    si.session,
-    address,
-    meth = MethodGet
-  )
+  for kind, path in walkDir(si.builtinSkillsDir):
+    if kind == pcDir:
+      let skillFile = path / "SKILL.md"
+      if fileExists(skillFile):
+        result.add(lastPathPart(path))
 
-  try:
-    let response = await request.send()
-    let bodyBytes = await response.getBodyBytes()
-    let body = cast[string](bodyBytes)
-    
-    if response.status != 200:
-      raise newException(IOError, "Failed to fetch skills list: " & $response.status)
-
-    return parseJson(body).to(seq[AvailableSkill])
-  except CatchableError as e:
-    raise newException(IOError, "Failed to list skills: " & e.msg)
+proc getSkillInfo*(si: SkillInstaller, skillName: string): tuple[name, path: string, exists: bool] =
+  let skillDir = si.getWorkspaceSkillsDir() / skillName
+  let skillFile = skillDir / "SKILL.md"
+  if fileExists(skillFile):
+    return (skillName, skillFile, true)
+  return (skillName, "", false)

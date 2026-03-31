@@ -94,34 +94,50 @@ proc cron(list = false, add = false, remove = "", enable = "", disable = "",
   elif enable != "": discard cs.enableJob(enable, true)
   elif disable != "": discard cs.enableJob(disable, false)
 
-proc skills(list = false, install = "", remove = "", show = "", search = false,
-            list_builtin = false, install_builtin = false) =
+proc skills(list = false, install = "", remove = "", show = "", create = "",
+            description = "", from_path = "") =
   let cfg = loadConfig(getConfigPath())
   let workspace = cfg.workspacePath()
   let installer = newSkillInstaller(workspace)
   let loader = newSkillsLoader(workspace, "", "")
+  
   if list:
-    for s in loader.listSkills(): echo "✓ ", s.name
-  elif list_builtin:
-    echo "Builtin skills: weather, news, stock, calculator" # Matches Go logic
+    let installed = installer.listInstalledSkills()
+    if installed.len == 0:
+      echo "No skills installed. Use --install or --create to add skills."
+    else:
+      echo "Installed skills:"
+      for s in installed: echo "  ✓ ", s
+  elif create != "":
+    try:
+      let path = installer.createSkill(create, description)
+      echo "Created skill at: ", path
+    except IOError as e:
+      echo "Error: ", e.msg
   elif install != "":
-    waitFor installer.installFromGitHub(install); echo "Installed ", install
+    # Install from GitHub (format: owner/repo)
+    try:
+      let name = installer.installFromGitHub(install)
+      echo "Installed skill from GitHub: ", name
+    except IOError as e:
+      echo "Error: ", e.msg
+  elif from_path != "":
+    # Install from local path
+    try:
+      let name = installer.installFromPath(from_path)
+      echo "Installed skill: ", name
+    except IOError as e:
+      echo "Error: ", e.msg
   elif remove != "":
-    installer.uninstall(remove); echo "Removed ", remove
+    try:
+      installer.uninstall(remove)
+      echo "Removed skill: ", remove
+    except IOError as e:
+      echo "Error: ", e.msg
   elif show != "":
     let (c, ok) = loader.loadSkill(show)
     if ok: echo c
-  elif search:
-    let available = waitFor installer.listAvailableSkills()
-    for s in available: echo "- ", s.name, ": ", s.description
-  elif install_builtin:
-    echo "Copying builtin skills to workspace..."
-    let builtinDir = getAppDir() / "picoclaw" / "skills"
-    let targetDir = workspace / "skills"
-    for s in ["weather", "news", "stock", "calculator"]:
-      if dirExists(builtinDir / s):
-        copyDir(builtinDir / s, targetDir / s)
-        echo "  Installed ", s
+    else: echo "Skill not found: ", show
 
 when isMainModule:
   dispatchMulti([onboard], [agent], [gateway], [status], [cron], [skills])
