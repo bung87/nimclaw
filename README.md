@@ -83,12 +83,3 @@ Edit `~/.picoclaw/config.json`:
   }
 }
 ```
-
-### Environment Variables
-
-```bash
-# API Keys
-export PICOCLAW_PROVIDERS_OPENAI_API_KEY=sk-...
-
-# Or use .env file in ~/.picoclaw/
-```
