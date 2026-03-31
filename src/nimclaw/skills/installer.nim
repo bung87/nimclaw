@@ -68,13 +68,19 @@ proc downloadDirectory(owner, repo, path, branch, destDir: string) =
   
   let contents = listDirectoryContents(owner, repo, path, branch)
   
+  if contents.len == 0:
+    raise newException(IOError, "Could not list directory contents: " & owner & "/" & repo & "/" & path)
+  
   for item in contents:
     let destPath = destDir / item.name
     
     if item.typeName == "file":
       if item.url != "":
-        let content = rawGet(item.url)
-        writeFile(destPath, content)
+        try:
+          let content = rawGet(item.url)
+          writeFile(destPath, content)
+        except CatchableError as e:
+          raise newException(IOError, "Failed to download " & item.name & ": " & e.msg)
     elif item.typeName == "dir":
       let subPath = if path != "": path & "/" & item.name else: item.name
       downloadDirectory(owner, repo, subPath, branch, destPath)
