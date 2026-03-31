@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Nim Version](https://img.shields.io/badge/nim-%3E%3D2.0.0-orange.svg)](https://nim-lang.org)
-[![Tests](https://github.com/bung87/nimclaw/actions/workflows/test.yml/badge.svg)](https://github.com/bung87/nimclaw/actions)
+[![CI](https://github.com/bung87/nimclaw/actions/workflows/ci.yml/badge.svg)](https://github.com/bung87/nimclaw/actions/workflows/ci.yml)
 [![GitHub stars](https://img.shields.io/github/stars/bung87/nimclaw?style=social)](https://github.com/bung87/nimclaw/stargazers)
 
 Ultra-efficient AI assistant in Nim. A high-performance implementation inspired by PicoClaw.
