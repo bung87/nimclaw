@@ -1,4 +1,5 @@
-import std/[tables, asyncdispatch]
+import chronos
+import std/[tables ]
 
 type
   InboundMessage* = object

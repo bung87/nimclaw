@@ -1,4 +1,5 @@
-import std/[os, times, strutils, locks, asyncdispatch, options, sequtils]
+import chronos
+import std/[os, times, strutils, locks, options, sequtils]
 import jsony
 
 type

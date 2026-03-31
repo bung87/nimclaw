@@ -1,4 +1,5 @@
-import std/[os, strutils, asyncdispatch, tables, options]
+import chronos
+import std/[os, strutils, tables, options]
 import cligen
 import nimclaw/[config, logger, bus, agent/loop, providers/http]
 import nimclaw/channels/[manager as channel_manager, base as channel_base]

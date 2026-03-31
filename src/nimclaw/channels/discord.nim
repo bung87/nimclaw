@@ -1,13 +1,18 @@
-import std/[asyncdispatch, httpclient, json, strutils, tables]
+import chronicles
+import chronos
+import chronos/apps/http/httpclient
+import std/[json, strutils, tables]
+import system/memory
+import websock/[websock, session, types]
 import base
 import ../bus, ../bus_types, ../config, ../logger, ../services/voice
-import ws
 
 type
   DiscordChannel* = ref object of BaseChannel
     token*: string
-    ws*: WebSocket
+    ws*: WSSession
     transcriber*: GroqTranscriber
+    session*: HttpSessionRef
 
 proc newDiscordChannel*(cfg: DiscordConfig, bus: MessageBus): DiscordChannel =
   let base = newBaseChannel("discord", bus, cfg.allow_from)
@@ -16,33 +21,58 @@ proc newDiscordChannel*(cfg: DiscordConfig, bus: MessageBus): DiscordChannel =
     name: base.name,
     allowList: base.allowList,
     running: false,
-    token: cfg.token
+    token: cfg.token,
+    session: HttpSessionRef.new()
   )
 
 method setTranscriber*(c: DiscordChannel, transcriber: GroqTranscriber) =
   c.transcriber = transcriber
 
 proc apiCall(c: DiscordChannel, method_name: string, url_part: string, payload: JsonNode = nil, meth: string = "POST"): Future[JsonNode] {.async.} =
-  let client = newAsyncHttpClient()
-  client.headers["Authorization"] = "Bot " & c.token
-  client.headers["Content-Type"] = "application/json"
+  var headers: seq[HttpHeaderTuple] = @[
+    (key: "Authorization", value: "Bot " & c.token),
+    (key: "Content-Type", value: "application/json")
+  ]
   let url = "https://discord.com/api/v10/" & url_part
+  
+  let addressRes = c.session.getAddress(url)
+  if addressRes.isErr:
+    return %*{}
+  let address = addressRes.get()
+  
+  var bodyData: seq[byte] = @[]
+  if payload != nil:
+    let s = $payload
+    bodyData = newSeq[byte](s.len)
+    copyMem(addr bodyData[0], unsafeAddr s[0], s.len)
+  let request = HttpClientRequestRef.new(
+    c.session,
+    address,
+    meth = if meth == "GET": MethodGet else: MethodPost,
+    headers = headers,
+    body = bodyData
+  )
+  
+  var response: HttpClientResponseRef = nil
   try:
-    let response = if meth == "POST": await client.post(url, if payload != nil: $payload else: "")
-                   elif meth == "GET": await client.get(url)
-                   else: await client.post(url, "")
-    let body = await response.body
+    response = await request.send()
+    let bodyBytes = await response.getBodyBytes()
+    await response.closeWait()
+    response = nil
+    let body = cast[string](bodyBytes)
     if body == "": return %*{}
     return parseJson(body)
-  finally:
-    client.close()
+  except CatchableError:
+    if not isNil(response):
+      await response.closeWait()
+    return %*{}
 
 proc gatewayLoop(c: DiscordChannel) {.async.} =
   while c.running:
     try:
-      let data = await c.ws.receiveStrPacket()
-      if data == "": break
-      let msg = parseJson(data)
+      let data = await c.ws.recvMsg()
+      if data.len == 0: break
+      let msg = parseJson(cast[string](data))
       let op = msg["op"].getInt()
 
       if op == 10: # Hello
@@ -83,8 +113,16 @@ method start*(c: DiscordChannel) {.async.} =
   infoC("discord", "Starting Discord bot (Gateway mode)...")
   try:
     let gatewayRes = await c.apiCall("GET", "gateway/bot", meth="GET")
-    let url = gatewayRes["url"].getStr() & "/?v=10&encoding=json"
-    c.ws = await newWebSocket(url)
+    let url = gatewayRes["url"].getStr()
+    # Parse gateway URL
+    var gatewayHost = url.replace("wss://", "").replace("ws://", "")
+    var gatewayPath = "/?v=10&encoding=json"
+    if gatewayHost.contains("/"):
+      let parts = gatewayHost.split("/", 1)
+      gatewayHost = parts[0]
+      gatewayPath = "/" & parts[1] & gatewayPath
+    
+    c.ws = await WebSocket.connect(gatewayHost, gatewayPath, secure = true)
     c.running = true
     discard gatewayLoop(c)
   except Exception as e:
@@ -92,7 +130,14 @@ method start*(c: DiscordChannel) {.async.} =
 
 method stop*(c: DiscordChannel) {.async.} =
   c.running = false
-  if c.ws != nil: c.ws.close()
+  if c.ws != nil: 
+    try:
+      await c.ws.close()
+    except: discard
+    c.ws = nil
+  if c.session != nil:
+    await c.session.closeWait()
+    c.session = nil
 
 method send*(c: DiscordChannel, msg: OutboundMessage) {.async.} =
   if not c.running: return

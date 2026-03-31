@@ -1,11 +1,12 @@
-import std/[os, osproc, asyncdispatch, tables, strutils, times, streams, json]
+import chronos
+import std/[os, osproc, tables, strutils, times, streams, json]
 import pkg/regex except re
 import types
 
 type
   ExecTool* = ref object of Tool
     workingDir*: string
-    timeout*: Duration
+    timeout*: times.Duration
     denyPatterns*: seq[Regex2]
     allowPatterns*: seq[Regex2]
     restrictToWorkspace*: bool

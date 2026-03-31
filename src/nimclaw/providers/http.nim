@@ -1,4 +1,6 @@
-import std/[asyncdispatch, json, strutils, tables], httpclient
+import std/[json, strutils, tables]
+import chronos
+import chronos/apps/http/httpclient
 import types
 import ../config as claw_config
 import ../logger
@@ -7,13 +9,14 @@ type
   HTTPProvider* = ref object of LLMProvider
     apiKey*: string
     apiBase*: string
-    client*: AsyncHttpClient
+    session*: HttpSessionRef
 
 proc newHTTPProvider*(apiKey, apiBase: string): HTTPProvider =
+  let session = HttpSessionRef.new()
   HTTPProvider(
     apiKey: apiKey,
     apiBase: apiBase,
-    client: newAsyncHttpClient()
+    session: session
   )
 
 method getDefaultModel*(p: HTTPProvider): string =
@@ -42,22 +45,37 @@ method chat*(p: HTTPProvider, messages: seq[Message], tools: seq[ToolDefinition]
   if options.hasKey("temperature"):
     requestBody["temperature"] = options["temperature"]
 
-  p.client.headers = newHttpHeaders({
-    "Content-Type": "application/json"
-  })
-
-  if p.apiKey != "":
-    p.client.headers["Authorization"] = "Bearer " & p.apiKey
-
   let url = p.apiBase & "/chat/completions"
-  let response = await p.client.post(url, $requestBody)
-  let body = await response.body
+  let bodyStr = $requestBody
+  
+  var headers: seq[HttpHeaderTuple] = @[]
+  headers.add((key: "Content-Type", value: "application/json"))
+  if p.apiKey != "":
+    headers.add((key: "Authorization", value: "Bearer " & p.apiKey))
 
-  if not response.status.startsWith("200"):
-    raise newException(IOError, "API error ($1): $2".format(response.status, body))
+  # Create and send request using chronos
+  let addressRes = p.session.getAddress(url)
+  if addressRes.isErr:
+    raise newException(IOError, "Failed to resolve URL: " & url)
+  let address = addressRes.get()
+  
+  let request = HttpClientRequestRef.new(
+    p.session,
+    address,
+    meth = MethodPost,
+    headers = headers,
+    body = bodyStr.toOpenArrayByte(0, bodyStr.len - 1)
+  )
+  
+  let response = await request.send()
+  let bodyBytes = await response.getBodyBytes()
+  let bodyText = cast[string](bodyBytes)
 
-  let jsonResp = parseJson(body)
-  debugCF("http", "LLM response received", {"body": body[0..<min(500, body.len)]}.toTable)
+  if response.status < 200 or response.status >= 300:
+    raise newException(IOError, "API error ($1): $2".format($response.status, bodyText))
+
+  let jsonResp = parseJson(bodyText)
+  debugCF("http", "LLM response received", {"body": bodyText[0..<min(500, bodyText.len)]}.toTable)
 
   var llmResp = LLMResponse()
   if jsonResp.hasKey("choices") and jsonResp["choices"].len > 0:

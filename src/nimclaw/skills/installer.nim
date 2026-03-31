@@ -1,4 +1,6 @@
-import std/[asyncdispatch, httpclient, os, json, strutils]
+import chronos
+import chronos/apps/http/httpclient
+import std/[os, json, strutils]
 
 type
   AvailableSkill* = object
@@ -15,9 +17,13 @@ type
 
   SkillInstaller* = ref object
     workspace*: string
+    session*: HttpSessionRef
 
 proc newSkillInstaller*(workspace: string): SkillInstaller =
-  SkillInstaller(workspace: workspace)
+  SkillInstaller(
+    workspace: workspace,
+    session: HttpSessionRef.new()
+  )
 
 proc installFromGitHub*(si: SkillInstaller, repo: string): Future[void] {.async.} =
   let skillName = lastPathPart(repo)
@@ -27,20 +33,32 @@ proc installFromGitHub*(si: SkillInstaller, repo: string): Future[void] {.async.
     raise newException(IOError, "Skill '$1' already exists".format(skillName))
 
   let url = "https://raw.githubusercontent.com/$1/main/SKILL.md".format(repo)
-  let client = newAsyncHttpClient()
+  
+  let addressRes = si.session.getAddress(url)
+  if addressRes.isErr:
+    raise newException(IOError, "Failed to resolve URL")
+  let address = addressRes.get()
+  
+  let request = HttpClientRequestRef.new(
+    si.session,
+    address,
+    meth = MethodGet
+  )
 
   try:
-    let response = await client.get(url)
-    if response.status != $Http200:
-      raise newException(IOError, "Failed to fetch skill: " & response.status)
+    let response = await request.send()
+    let bodyBytes = await response.getBodyBytes()
+    let body = cast[string](bodyBytes)
+    
+    if response.status != 200:
+      raise newException(IOError, "Failed to fetch skill: " & $response.status)
 
-    let body = await response.body
     if not dirExists(si.workspace / "skills"):
       createDir(si.workspace / "skills")
     createDir(skillDir)
     writeFile(skillDir / "SKILL.md", body)
-  finally:
-    client.close()
+  except Exception as e:
+    raise newException(IOError, "Failed to install skill: " & e.msg)
 
 proc uninstall*(si: SkillInstaller, skillName: string) =
   let skillDir = si.workspace / "skills" / skillName
@@ -50,14 +68,26 @@ proc uninstall*(si: SkillInstaller, skillName: string) =
 
 proc listAvailableSkills*(si: SkillInstaller): Future[seq[AvailableSkill]] {.async.} =
   let url = "https://raw.githubusercontent.com/sipeed/picoclaw-skills/main/skills.json"
-  let client = newAsyncHttpClient()
+  
+  let addressRes = si.session.getAddress(url)
+  if addressRes.isErr:
+    raise newException(IOError, "Failed to resolve URL")
+  let address = addressRes.get()
+  
+  let request = HttpClientRequestRef.new(
+    si.session,
+    address,
+    meth = MethodGet
+  )
 
   try:
-    let response = await client.get(url)
-    if response.status != $Http200:
-      raise newException(IOError, "Failed to fetch skills list: " & response.status)
+    let response = await request.send()
+    let bodyBytes = await response.getBodyBytes()
+    let body = cast[string](bodyBytes)
+    
+    if response.status != 200:
+      raise newException(IOError, "Failed to fetch skills list: " & $response.status)
 
-    let body = await response.body
     return parseJson(body).to(seq[AvailableSkill])
-  finally:
-    client.close()
+  except Exception as e:
+    raise newException(IOError, "Failed to list skills: " & e.msg)

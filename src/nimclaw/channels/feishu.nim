@@ -1,14 +1,17 @@
-import std/[asyncdispatch, httpclient, json, strutils, tables]
+import chronos
+import chronos/apps/http/httpclient
+import std/[json, strutils, tables]
+import websock/websock
 import base
 import ../bus, ../bus_types, ../config, ../logger
-import ws
 
 type
   FeishuChannel* = ref object of BaseChannel
     appID: string
     appSecret: string
     token: string
-    ws: WebSocket
+    ws*: WSSession
+    session*: HttpSessionRef
 
 proc newFeishuChannel*(cfg: FeishuConfig, bus: MessageBus): FeishuChannel =
   let base = newBaseChannel("feishu", bus, cfg.allow_from)
@@ -18,26 +21,49 @@ proc newFeishuChannel*(cfg: FeishuConfig, bus: MessageBus): FeishuChannel =
     allowList: base.allowList,
     running: false,
     appID: cfg.app_id,
-    appSecret: cfg.app_secret
+    appSecret: cfg.app_secret,
+    session: HttpSessionRef.new()
   )
 
 proc getTenantAccessToken(c: FeishuChannel) {.async.} =
-  let client = newAsyncHttpClient()
   let url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
   let payload = %*{"app_id": c.appID, "app_secret": c.appSecret}
+  
+  var headers: seq[HttpHeaderTuple] = @[
+    (key: "Content-Type", value: "application/json")
+  ]
+  
+  let addressRes = c.session.getAddress(url)
+  if addressRes.isErr:
+    return
+  let address = addressRes.get()
+  
+  let bodyStr = $payload
+  let request = HttpClientRequestRef.new(
+    c.session,
+    address,
+    meth = MethodPost,
+    headers = headers,
+    body = bodyStr.toOpenArrayByte(0, bodyStr.len - 1)
+  )
+  
+  var response: HttpClientResponseRef = nil
   try:
-    let response = await client.post(url, $payload)
-    let body = await response.body
+    response = await request.send()
+    let bodyBytes = await response.getBodyBytes()
+    await response.closeWait()
+    response = nil
+    let body = cast[string](bodyBytes)
     let res = parseJson(body)
     if res.hasKey("tenant_access_token"):
       c.token = res["tenant_access_token"].getStr()
       infoC("feishu", "Obtained Feishu tenant access token")
     else:
       errorCF("feishu", "Failed to get token", {"response": body}.toTable)
-  except Exception as e:
+  except CatchableError as e:
+    if not isNil(response):
+      await response.closeWait()
     errorCF("feishu", "Auth error", {"error": e.msg}.toTable)
-  finally:
-    client.close()
 
 proc feishuGatewayLoop(c: FeishuChannel) {.async.} =
   while c.running:
@@ -45,9 +71,9 @@ proc feishuGatewayLoop(c: FeishuChannel) {.async.} =
       if c.ws == nil:
         await sleepAsync(5000)
         continue
-      let data = await c.ws.receiveStrPacket()
-      if data == "": break
-      let msg = parseJson(data)
+      let data = await c.ws.recvMsg()
+      if data.len == 0: break
+      let msg = parseJson(cast[string](data))
 
       # Handle Feishu WebSocket events
       if msg.hasKey("header") and msg["header"].hasKey("event_type"):
@@ -83,52 +109,108 @@ method start*(c: FeishuChannel) {.async.} =
   infoC("feishu", "Starting Feishu channel (WS mode)...")
   await c.getTenantAccessToken()
 
-  let client = newAsyncHttpClient()
-  client.headers["Authorization"] = "Bearer " & c.token
+  var headers: seq[HttpHeaderTuple] = @[
+    (key: "Authorization", value: "Bearer " & c.token)
+  ]
+  
+  let url = "https://open.feishu.cn/open-apis/ws/v1/endpoint"
+  let addressRes = c.session.getAddress(url)
+  if addressRes.isErr:
+    c.running = true
+    infoC("feishu", "Feishu started in send-only mode (WS failed)")
+    return
+  let address = addressRes.get()
+  
+  let request = HttpClientRequestRef.new(
+    c.session,
+    address,
+    meth = MethodPost,
+    headers = headers
+  )
+  
+  var response: HttpClientResponseRef = nil
   try:
-    # Simplified Lark WS handshake
-    let url = "https://open.feishu.cn/open-apis/ws/v1/endpoint"
-    let response = await client.post(url, "")
-    let body = await response.body
+    response = await request.send()
+    let bodyBytes = await response.getBodyBytes()
+    await response.closeWait()
+    response = nil
+    let body = cast[string](bodyBytes)
     let res = parseJson(body)
     if res.hasKey("data") and res["data"].hasKey("url"):
       let wsUrl = res["data"]["url"].getStr()
-      c.ws = await newWebSocket(wsUrl)
+      # Parse WebSocket URL
+      var wsHost = wsUrl.replace("wss://", "").replace("ws://", "")
+      var wsPath = "/"
+      if wsHost.contains("/"):
+        let parts = wsHost.split("/", 1)
+        wsHost = parts[0]
+        wsPath = "/" & parts[1]
+      
+      c.ws = await WebSocket.connect(wsHost, wsPath, secure = wsUrl.startsWith("wss"))
       c.running = true
       discard feishuGatewayLoop(c)
       infoC("feishu", "Feishu connected via WebSocket")
     else:
       c.running = true
       infoC("feishu", "Feishu started in send-only mode (WS failed)")
-  except Exception as e:
+  except CatchableError as e:
+    if not isNil(response):
+      await response.closeWait()
     errorCF("feishu", "WS handshake failed", {"error": e.msg}.toTable)
     c.running = true
-  finally:
-    client.close()
 
 method stop*(c: FeishuChannel) {.async.} =
   c.running = false
-  if c.ws != nil: c.ws.close()
+  if c.ws != nil: 
+    try:
+      await c.ws.close()
+    except: discard
+    c.ws = nil
+  if c.session != nil:
+    await c.session.closeWait()
+    c.session = nil
 
 method send*(c: FeishuChannel, msg: OutboundMessage) {.async.} =
   if not c.running: return
-  let client = newAsyncHttpClient()
-  client.headers["Authorization"] = "Bearer " & c.token
-  client.headers["Content-Type"] = "application/json"
+  
+  var headers: seq[HttpHeaderTuple] = @[
+    (key: "Authorization", value: "Bearer " & c.token),
+    (key: "Content-Type", value: "application/json")
+  ]
+  
   let url = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id"
   let payload = %*{
     "receive_id": msg.chat_id,
     "msg_type": "text",
     "content": $ %*{"text": msg.content}
   }
+  
+  let addressRes = c.session.getAddress(url)
+  if addressRes.isErr:
+    return
+  let address = addressRes.get()
+  
+  let bodyStr = $payload
+  let request = HttpClientRequestRef.new(
+    c.session,
+    address,
+    meth = MethodPost,
+    headers = headers,
+    body = bodyStr.toOpenArrayByte(0, bodyStr.len - 1)
+  )
+  
+  var resp: HttpClientResponseRef = nil
   try:
-    let resp = await client.post(url, $payload)
-    if not resp.status.startsWith("200"):
-      let body = await resp.body
-      errorCF("feishu", "Send failed", {"status": resp.status, "response": body}.toTable)
-  except Exception as e:
+    resp = await request.send()
+    let status = resp.status
+    let bodyBytes = await resp.getBodyBytes()
+    await resp.closeWait()
+    resp = nil
+    if status != 200:
+      errorCF("feishu", "Send failed", {"status": $status, "response": cast[string](bodyBytes)}.toTable)
+  except CatchableError as e:
+    if not isNil(resp):
+      await resp.closeWait()
     errorCF("feishu", "Send error", {"error": e.msg}.toTable)
-  finally:
-    client.close()
 
 method isRunning*(c: FeishuChannel): bool = c.running

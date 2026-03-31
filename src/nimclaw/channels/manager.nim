@@ -1,4 +1,5 @@
-import std/[asyncdispatch, tables, locks, strutils]
+import chronos
+import std/[tables, locks, strutils]
 import base as channel_base
 import telegram, discord, whatsapp, dingtalk, maixcam, feishu, qq
 import ../bus, ../bus_types, ../config, ../logger

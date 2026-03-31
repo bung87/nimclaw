@@ -1,4 +1,5 @@
-import std/[asyncdispatch, tables, json, locks, times, strutils]
+import chronos
+import std/[tables, json, locks, times, strutils]
 import types
 import ../logger
 import ../providers/types as providers_types
@@ -68,7 +69,10 @@ proc executeWithContext*(r: ToolRegistry, name: string, args: Table[string, Json
     return "Error: tool '" & name & "' not found"
 
   if tool of ContextualTool and channel != "" and chatID != "":
-    (cast[ContextualTool](tool)).setContext(channel, chatID)
+    try:
+      (cast[ContextualTool](tool)).setContext(channel, chatID)
+    except Exception:
+      discard
 
   let start = now()
   var result = ""

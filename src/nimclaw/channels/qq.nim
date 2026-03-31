@@ -1,16 +1,19 @@
-import std/[asyncdispatch, httpclient, json, strutils, tables, locks]
+import chronos
+import chronos/apps/http/httpclient
+import std/[json, strutils, tables, locks]
+import websock/websock
 import base
 import ../bus, ../bus_types, ../config, ../logger
-import ws
 
 type
   QQChannel* = ref object of BaseChannel
     appID: string
     appSecret: string
     token: string
-    ws: WebSocket
+    ws*: WSSession
     processedIDs: Table[string, bool]
     lock: Lock
+    session*: HttpSessionRef
 
 proc newQQChannel*(cfg: QQConfig, bus: MessageBus): QQChannel =
   let base = newBaseChannel("qq", bus, cfg.allow_from)
@@ -21,35 +24,58 @@ proc newQQChannel*(cfg: QQConfig, bus: MessageBus): QQChannel =
     running: false,
     appID: cfg.app_id,
     appSecret: cfg.app_secret,
-    processedIDs: initTable[string, bool]()
+    processedIDs: initTable[string, bool](),
+    session: HttpSessionRef.new()
   )
   initLock(qc.lock)
   return qc
 
 proc getAccessToken(c: QQChannel) {.async.} =
-  let client = newAsyncHttpClient()
   let url = "https://bots.qq.com/app/getAppAccessToken"
   let payload = %*{"appId": c.appID, "clientSecret": c.appSecret}
+  
+  var headers: seq[HttpHeaderTuple] = @[
+    (key: "Content-Type", value: "application/json")
+  ]
+  
+  let addressRes = c.session.getAddress(url)
+  if addressRes.isErr:
+    return
+  let address = addressRes.get()
+  
+  let bodyStr = $payload
+  let request = HttpClientRequestRef.new(
+    c.session,
+    address,
+    meth = MethodPost,
+    headers = headers,
+    body = bodyStr.toOpenArrayByte(0, bodyStr.len - 1)
+  )
+  
+  var response: HttpClientResponseRef = nil
   try:
-    let response = await client.post(url, $payload)
-    let body = await response.body
+    response = await request.send()
+    let bodyBytes = await response.getBodyBytes()
+    await response.closeWait()
+    response = nil
+    let body = cast[string](bodyBytes)
     let res = parseJson(body)
     if res.hasKey("access_token"):
       c.token = res["access_token"].getStr()
       infoC("qq", "Obtained QQ access token")
     else:
       errorCF("qq", "Failed to get access token", {"response": body}.toTable)
-  except Exception as e:
+  except CatchableError as e:
+    if not isNil(response):
+      await response.closeWait()
     errorCF("qq", "Auth error", {"error": e.msg}.toTable)
-  finally:
-    client.close()
 
 proc qqGatewayLoop(c: QQChannel) {.async.} =
   while c.running:
     try:
-      let data = await c.ws.receiveStrPacket()
-      if data == "": break
-      let msg = parseJson(data)
+      let data = await c.ws.recvMsg()
+      if data.len == 0: break
+      let msg = parseJson(cast[string](data))
       let op = msg["op"].getInt()
 
       if op == 10: # Hello
@@ -100,42 +126,99 @@ method start*(c: QQChannel) {.async.} =
   infoC("qq", "Starting QQ Bot channel...")
   await c.getAccessToken()
 
-  let client = newAsyncHttpClient()
-  client.headers["Authorization"] = "QQBot " & c.token
+  var headers: seq[HttpHeaderTuple] = @[
+    (key: "Authorization", value: "QQBot " & c.token)
+  ]
+  
+  let url = "https://api.sgroup.qq.com/gateway/bot"
+  let addressRes = c.session.getAddress(url)
+  if addressRes.isErr:
+    errorCF("qq", "Failed to resolve gateway URL", initTable[string, string]())
+    return
+  let address = addressRes.get()
+  
+  let request = HttpClientRequestRef.new(
+    c.session,
+    address,
+    meth = MethodGet,
+    headers = headers
+  )
+  
+  var response: HttpClientResponseRef = nil
   try:
-    let response = await client.get("https://api.sgroup.qq.com/gateway/bot")
-    let body = await response.body
+    response = await request.send()
+    let bodyBytes = await response.getBodyBytes()
+    await response.closeWait()
+    response = nil
+    let body = cast[string](bodyBytes)
     let res = parseJson(body)
     if res.hasKey("url"):
-      let url = res["url"].getStr()
-      c.ws = await newWebSocket(url)
+      let wsUrl = res["url"].getStr()
+      # Parse WebSocket URL
+      var wsHost = wsUrl.replace("wss://", "").replace("ws://", "")
+      var wsPath = "/"
+      if wsHost.contains("/"):
+        let parts = wsHost.split("/", 1)
+        wsHost = parts[0]
+        wsPath = "/" & parts[1]
+      
+      c.ws = await WebSocket.connect(wsHost, wsPath, secure = wsUrl.startsWith("wss"))
       c.running = true
       discard qqGatewayLoop(c)
       infoC("qq", "QQ bot connected")
-  except Exception as e:
+  except CatchableError as e:
+    if not isNil(response):
+      await response.closeWait()
     errorCF("qq", "Connection failed", {"error": e.msg}.toTable)
-  finally:
-    client.close()
 
 method stop*(c: QQChannel) {.async.} =
   c.running = false
-  if c.ws != nil: c.ws.close()
+  if c.ws != nil: 
+    try:
+      await c.ws.close()
+    except: discard
+    c.ws = nil
+  if c.session != nil:
+    await c.session.closeWait()
+    c.session = nil
 
 method send*(c: QQChannel, msg: OutboundMessage) {.async.} =
   if not c.running: return
-  let client = newAsyncHttpClient()
-  client.headers["Authorization"] = "QQBot " & c.token
-  client.headers["Content-Type"] = "application/json"
+  
+  var headers: seq[HttpHeaderTuple] = @[
+    (key: "Authorization", value: "QQBot " & c.token),
+    (key: "Content-Type", value: "application/json")
+  ]
+  
   let url = "https://api.sgroup.qq.com/v2/users/$1/messages".format(msg.chat_id)
   let payload = %*{"content": msg.content, "msg_type": 0}
+  
+  let addressRes = c.session.getAddress(url)
+  if addressRes.isErr:
+    return
+  let address = addressRes.get()
+  
+  let bodyStr = $payload
+  let request = HttpClientRequestRef.new(
+    c.session,
+    address,
+    meth = MethodPost,
+    headers = headers,
+    body = bodyStr.toOpenArrayByte(0, bodyStr.len - 1)
+  )
+  
+  var resp: HttpClientResponseRef = nil
   try:
-    let resp = await client.post(url, $payload)
-    if not resp.status.startsWith("200"):
-      let body = await resp.body
-      errorCF("qq", "Send failed", {"status": resp.status, "response": body}.toTable)
-  except Exception as e:
+    resp = await request.send()
+    let status = resp.status
+    let bodyBytes = await resp.getBodyBytes()
+    await resp.closeWait()
+    resp = nil
+    if status != 200:
+      errorCF("qq", "Send failed", {"status": $status, "response": cast[string](bodyBytes)}.toTable)
+  except CatchableError as e:
+    if not isNil(resp):
+      await resp.closeWait()
     errorCF("qq", "Send error", {"error": e.msg}.toTable)
-  finally:
-    client.close()
 
 method isRunning*(c: QQChannel): bool = c.running

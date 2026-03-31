@@ -1,4 +1,5 @@
-import std/[os, json, strutils, asyncdispatch, tables, locks]
+import chronos
+import std/[os, json, strutils, tables, locks]
 import ../bus, ../bus_types, ../config, ../logger, ../providers/types as providers_types, ../session, ../utils
 import context as agent_context
 import ../tools/registry as tools_registry
@@ -155,7 +156,11 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
     iteration += 1
     debugCF("agent", "LLM iteration", {"iteration": $iteration, "max": $al.maxIterations}.toTable)
 
-    let toolDefs = al.tools.getDefinitions()
+    var toolDefs: seq[ToolDefinition] = @[]
+    try:
+      toolDefs = al.tools.getDefinitions()
+    except Exception as e:
+      errorCF("agent", "Failed to get tool definitions", {"error": e.msg}.toTable)
     let response = await al.provider.chat(currentMessages, toolDefs, al.model, initTable[string, JsonNode]())
 
     if response.tool_calls.len == 0:
@@ -182,7 +187,11 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
 proc runAgentLoop*(al: AgentLoop, opts: ProcessOptions): Future[string] {.async.} =
   let history = al.sessions.getHistory(opts.sessionKey)
   let summary = al.sessions.getSummary(opts.sessionKey)
-  var messages = al.contextBuilder.buildMessages(history, summary, opts.userMessage, opts.channel, opts.chatID)
+  var messages: seq[providers_types.Message] = @[]
+  try:
+    messages = al.contextBuilder.buildMessages(history, summary, opts.userMessage, opts.channel, opts.chatID)
+  except Exception as e:
+    errorCF("agent", "Failed to build messages", {"error": e.msg}.toTable)
 
   al.sessions.addMessage(opts.sessionKey, "user", opts.userMessage)
 
@@ -208,15 +217,18 @@ proc processMessage*(al: AgentLoop, msg: InboundMessage): Future[string] {.async
   infoCF("agent", "Processing message from " & msg.channel & ":" & msg.sender_id, {"session_key": msg.session_key}.toTable)
 
   # update tool contexts
-  let (toolMsg, okMsg) = al.tools.get("message")
-  if okMsg:
-    if toolMsg of MessageTool: cast[MessageTool](toolMsg).setContext(msg.channel, msg.chat_id)
-  let (toolSpawn, okSpawn) = al.tools.get("spawn")
-  if okSpawn:
-    if toolSpawn of SpawnTool: cast[SpawnTool](toolSpawn).setContext(msg.channel, msg.chat_id)
-  let (toolCron, okCron) = al.tools.get("cron")
-  if okCron:
-    if toolCron of CronTool: cast[CronTool](toolCron).setContext(msg.channel, msg.chat_id)
+  try:
+    let (toolMsg, okMsg) = al.tools.get("message")
+    if okMsg:
+      if toolMsg of MessageTool: cast[MessageTool](toolMsg).setContext(msg.channel, msg.chat_id)
+    let (toolSpawn, okSpawn) = al.tools.get("spawn")
+    if okSpawn:
+      if toolSpawn of SpawnTool: cast[SpawnTool](toolSpawn).setContext(msg.channel, msg.chat_id)
+    let (toolCron, okCron) = al.tools.get("cron")
+    if okCron:
+      if toolCron of CronTool: cast[CronTool](toolCron).setContext(msg.channel, msg.chat_id)
+  except Exception:
+    discard
 
   if msg.channel == "system":
     # logic for system messages...

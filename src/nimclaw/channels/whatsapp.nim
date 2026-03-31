@@ -1,11 +1,12 @@
-import std/[asyncdispatch, tables, strutils, json]
-import ws
+import chronos
+import std/[tables, strutils, json]
+import websock/[websock, session, types]
 import base
 import ../bus, ../bus_types, ../config, ../logger
 
 type
   WhatsAppChannel* = ref object of BaseChannel
-    conn: WebSocket
+    conn*: WSSession
     url: string
 
 proc newWhatsAppChannel*(cfg: WhatsAppConfig, bus: MessageBus): WhatsAppChannel =
@@ -23,9 +24,9 @@ method name*(c: WhatsAppChannel): string = "whatsapp"
 proc listen(c: WhatsAppChannel) {.async.} =
   while c.running:
     try:
-      let data = await c.conn.receiveStrPacket()
-      if data == "": break
-      let msg = parseJson(data)
+      let data = await c.conn.recvMsg()
+      if data.len == 0: break
+      let msg = parseJson(cast[string](data))
       if msg.getOrDefault("type").getStr() == "message":
         let senderID = msg["from"].getStr()
         let chatID = msg.getOrDefault("chat").getStr(senderID)
@@ -43,7 +44,15 @@ proc listen(c: WhatsAppChannel) {.async.} =
 method start*(c: WhatsAppChannel) {.async.} =
   infoC("whatsapp", "Starting WhatsApp channel connecting to " & c.url)
   try:
-    c.conn = await newWebSocket(c.url)
+    # Parse WebSocket URL
+    var wsHost = c.url.replace("wss://", "").replace("ws://", "")
+    var wsPath = "/"
+    if wsHost.contains("/"):
+      let parts = wsHost.split("/", 1)
+      wsHost = parts[0]
+      wsPath = "/" & parts[1]
+    
+    c.conn = await WebSocket.connect(wsHost, wsPath, secure = c.url.startsWith("wss"))
     c.running = true
     discard listen(c)
     infoC("whatsapp", "WhatsApp channel connected")
@@ -52,7 +61,10 @@ method start*(c: WhatsAppChannel) {.async.} =
 
 method stop*(c: WhatsAppChannel) {.async.} =
   c.running = false
-  if c.conn != nil: c.conn.close()
+  if c.conn != nil: 
+    try:
+      await c.conn.close()
+    except: discard
 
 method send*(c: WhatsAppChannel, msg: OutboundMessage) {.async.} =
   if c.conn == nil: return

@@ -1,4 +1,5 @@
-import std/[tables, json, asyncdispatch]
+import std/[tables, json]
+import chronos
 
 type
   ToolFunctionCall* = object
@@ -43,5 +44,5 @@ type
 method chat*(p: LLMProvider, messages: seq[Message], tools: seq[ToolDefinition], model: string, options: Table[string, JsonNode]): Future[LLMResponse] {.base, async.} =
   discard
 
-method getDefaultModel*(p: LLMProvider): string {.base.} =
+method getDefaultModel*(p: LLMProvider): string {.base, gcsafe.} =
   return ""

@@ -1,4 +1,5 @@
-import std/[json, tables, asyncdispatch]
+import chronos
+import std/[json, tables]
 
 type
   Tool* = ref object of RootObj
@@ -11,4 +12,4 @@ method execute*(t: Tool, args: Table[string, JsonNode]): Future[string] {.base, 
 type
   ContextualTool* = ref object of Tool
 
-method setContext*(t: ContextualTool, channel, chatID: string) {.base.} = discard
+method setContext*(t: ContextualTool, channel, chatID: string) {.base, gcsafe.} = discard

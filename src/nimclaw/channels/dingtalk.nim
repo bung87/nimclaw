@@ -1,7 +1,9 @@
-import std/[asyncdispatch, httpclient, json, strutils, tables, locks]
+import chronos
+import chronos/apps/http/httpclient
+import std/[json, strutils, tables, locks]
+import websock/websock
 import base
 import ../bus, ../bus_types, ../config, ../logger
-import ws
 
 type
   DingTalkChannel* = ref object of BaseChannel
@@ -9,7 +11,8 @@ type
     clientSecret: string
     sessionWebhooks: Table[string, string]
     lock: Lock
-    ws: WebSocket
+    ws*: WSSession
+    session*: HttpSessionRef
 
 proc newDingTalkChannel*(cfg: DingTalkConfig, bus: MessageBus): DingTalkChannel =
   let base = newBaseChannel("dingtalk", bus, cfg.allow_from)
@@ -20,7 +23,8 @@ proc newDingTalkChannel*(cfg: DingTalkConfig, bus: MessageBus): DingTalkChannel 
     running: false,
     clientID: cfg.client_id,
     clientSecret: cfg.client_secret,
-    sessionWebhooks: initTable[string, string]()
+    sessionWebhooks: initTable[string, string](),
+    session: HttpSessionRef.new()
   )
   initLock(dc.lock)
   return dc
@@ -32,9 +36,9 @@ proc dingtalkGatewayLoop(c: DingTalkChannel) {.async.} =
         await sleepAsync(5000)
         continue
 
-      let data = await c.ws.receiveStrPacket()
-      if data == "": break
-      let msg = parseJson(data)
+      let data = await c.ws.recvMsg()
+      if data.len == 0: break
+      let msg = parseJson(cast[string](data))
 
       # Simplified DingTalk Stream Mode handling
       if msg.getOrDefault("type").getStr() == "chat.chatbot.message":
@@ -67,7 +71,14 @@ method start*(c: DingTalkChannel) {.async.} =
 
 method stop*(c: DingTalkChannel) {.async.} =
   c.running = false
-  if c.ws != nil: c.ws.close()
+  if c.ws != nil: 
+    try:
+      await c.ws.close()
+    except: discard
+    c.ws = nil
+  if c.session != nil:
+    await c.session.closeWait()
+    c.session = nil
 
 method send*(c: DingTalkChannel, msg: OutboundMessage) {.async.} =
   if not c.running: return
@@ -81,8 +92,9 @@ method send*(c: DingTalkChannel, msg: OutboundMessage) {.async.} =
     errorCF("dingtalk", "No session webhook for chat", {"chat_id": msg.chat_id}.toTable)
     return
 
-  let client = newAsyncHttpClient()
-  client.headers["Content-Type"] = "application/json"
+  var headers: seq[HttpHeaderTuple] = @[
+    (key: "Content-Type", value: "application/json")
+  ]
   let payload = %*{
     "msgtype": "markdown",
     "markdown": {
@@ -90,14 +102,33 @@ method send*(c: DingTalkChannel, msg: OutboundMessage) {.async.} =
       "text": msg.content
     }
   }
+  
+  let addressRes = c.session.getAddress(webhook)
+  if addressRes.isErr:
+    return
+  let address = addressRes.get()
+  
+  let bodyStr = $payload
+  let request = HttpClientRequestRef.new(
+    c.session,
+    address,
+    meth = MethodPost,
+    headers = headers,
+    body = bodyStr.toOpenArrayByte(0, bodyStr.len - 1)
+  )
+  
+  var resp: HttpClientResponseRef = nil
   try:
-    let resp = await client.post(webhook, $payload)
-    if not resp.status.startsWith("200"):
-      let body = await resp.body
-      errorCF("dingtalk", "Send failed", {"status": resp.status, "response": body}.toTable)
-  except Exception as e:
+    resp = await request.send()
+    let status = resp.status
+    let bodyBytes = await resp.getBodyBytes()
+    await resp.closeWait()
+    resp = nil
+    if status != 200:
+      errorCF("dingtalk", "Send failed", {"status": $status, "response": cast[string](bodyBytes)}.toTable)
+  except CatchableError as e:
+    if not isNil(resp):
+      await resp.closeWait()
     errorCF("dingtalk", "Send error", {"error": e.msg}.toTable)
-  finally:
-    client.close()
 
 method isRunning*(c: DingTalkChannel): bool = c.running

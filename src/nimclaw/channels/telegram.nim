@@ -1,4 +1,6 @@
-import std/[asyncdispatch, httpclient, json, strutils, tables, os]
+import chronos
+import chronos/apps/http/httpclient
+import std/[json, strutils, tables, os]
 import pkg/regex except re
 import base
 import ../bus, ../bus_types, ../config, ../logger, ../services/voice
@@ -10,6 +12,7 @@ type
     transcriber*: GroqTranscriber
     placeholders: Table[string, int] # chatID -> messageID
     stopThinking: Table[string, bool] # chatID -> stopped
+    session*: HttpSessionRef
 
 proc markdownToTelegramHTML(text: string): string =
   if text == "": return ""
@@ -35,25 +38,50 @@ proc newTelegramChannel*(cfg: TelegramConfig, bus: MessageBus): TelegramChannel 
     token: cfg.token,
     lastUpdateID: 0,
     placeholders: initTable[string, int](),
-    stopThinking: initTable[string, bool]()
+    stopThinking: initTable[string, bool](),
+    session: HttpSessionRef.new()
   )
 
 method setTranscriber*(c: TelegramChannel, transcriber: GroqTranscriber) =
   c.transcriber = transcriber
 
 proc apiCall(c: TelegramChannel, method_name: string, payload: JsonNode): Future[JsonNode] {.async.} =
-  let client = newAsyncHttpClient()
-  client.headers["Content-Type"] = "application/json"
+  var headers: seq[HttpHeaderTuple] = @[
+    (key: "Content-Type", value: "application/json")
+  ]
   let url = "https://api.telegram.org/bot$1/$2".format(c.token, method_name)
+  
+  let addressRes = c.session.getAddress(url)
+  if addressRes.isErr:
+    errorCF("telegram", "Failed to resolve URL", {"url": url}.toTable)
+    return %*{"ok": false}
+  let address = addressRes.get()
+  
+  let bodyStr = $payload
+  let request = HttpClientRequestRef.new(
+    c.session,
+    address,
+    meth = MethodPost,
+    headers = headers,
+    body = bodyStr.toOpenArrayByte(0, bodyStr.len - 1)
+  )
+  
+  var response: HttpClientResponseRef = nil
   try:
-    let response = await client.post(url, $payload)
-    let body = await response.body
+    response = await request.send()
+    let bodyBytes = await response.getBodyBytes()
+    await response.closeWait()
+    response = nil
+    let body = cast[string](bodyBytes)
     let json = parseJson(body)
     if not json["ok"].getBool():
       errorCF("telegram", "API error", {"method": method_name, "error": json.getOrDefault("description").getStr()}.toTable)
     return json
-  finally:
-    client.close()
+  except CatchableError as e:
+    if not isNil(response):
+      await response.closeWait()
+    errorCF("telegram", "Request failed", {"method": method_name, "error": e.msg}.toTable)
+    return %*{"ok": false}
 
 proc downloadFile(c: TelegramChannel, fileID: string, ext: string): Future[string] {.async.} =
   let res = await c.apiCall("getFile", %*{"file_id": fileID})
@@ -61,20 +89,32 @@ proc downloadFile(c: TelegramChannel, fileID: string, ext: string): Future[strin
   let filePath = res["result"]["file_path"].getStr()
   let url = "https://api.telegram.org/file/bot$1/$2".format(c.token, filePath)
 
-  let client = newAsyncHttpClient()
+  let addressRes = c.session.getAddress(url)
+  if addressRes.isErr: return ""
+  let address = addressRes.get()
+  
+  let request = HttpClientRequestRef.new(
+    c.session,
+    address,
+    meth = MethodGet
+  )
+  
+  var response: HttpClientResponseRef = nil
   try:
-    let response = await client.get(url)
-    if response.status.startsWith("200"):
+    response = await request.send()
+    let status = response.status
+    let bodyBytes = await response.getBodyBytes()
+    await response.closeWait()
+    response = nil
+    if status == 200:
       let mediaDir = getTempDir() / "picoclaw_media"
       if not dirExists(mediaDir): createDir(mediaDir)
       let localPath = mediaDir / (fileID[0..min(15, fileID.len-1)] & ext)
-      let body = await response.body
-      writeFile(localPath, body)
+      writeFile(localPath, cast[string](bodyBytes))
       return localPath
-  except:
-    discard
-  finally:
-    client.close()
+  except CatchableError:
+    if not isNil(response):
+      await response.closeWait()
   return ""
 
 proc handleTelegramUpdate(c: TelegramChannel, update: JsonNode) {.async.} =
@@ -142,7 +182,10 @@ proc handleTelegramUpdate(c: TelegramChannel, update: JsonNode) {.async.} =
         discard await c.apiCall("editMessageText", %*{"chat_id": chatID, "message_id": c.placeholders[chatID], "text": text})
     )()
 
-  c.handleMessage(senderID, chatID, content, mediaPaths)
+  try:
+    c.handleMessage(senderID, chatID, content, mediaPaths)
+  except Exception as e:
+    errorCF("telegram", "Failed to handle message", {"error": e.msg}.toTable)
 
 proc poll(c: TelegramChannel) {.async.} =
   while c.running:
@@ -168,6 +211,9 @@ method start*(c: TelegramChannel) {.async.} =
 
 method stop*(c: TelegramChannel) {.async.} =
   c.running = false
+  if c.session != nil:
+    await c.session.closeWait()
+    c.session = nil
 
 method send*(c: TelegramChannel, msg: OutboundMessage) {.async.} =
   if not c.running: return

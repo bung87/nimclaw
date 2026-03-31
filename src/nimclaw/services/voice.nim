@@ -1,4 +1,6 @@
-import std/[asyncdispatch, httpclient, json, strutils, os, tables, times]
+import chronos
+import chronos/apps/http/httpclient
+import std/[json, strutils, os, tables, times]
 import ../logger
 
 type
@@ -10,13 +12,13 @@ type
   GroqTranscriber* = ref object
     apiKey*: string
     apiBase*: string
-    client*: AsyncHttpClient
+    session*: HttpSessionRef
 
 proc newGroqTranscriber*(apiKey: string): GroqTranscriber =
   GroqTranscriber(
     apiKey: apiKey,
     apiBase: "https://api.groq.com/openai/v1",
-    client: newAsyncHttpClient()
+    session: HttpSessionRef.new()
   )
 
 proc isAvailable*(t: GroqTranscriber): bool =
@@ -44,17 +46,32 @@ proc transcribe*(t: GroqTranscriber, audioFilePath: string): Future[Transcriptio
 
   body.add("--" & boundary & "--\r\n")
 
-  t.client.headers = newHttpHeaders({
-    "Content-Type": "multipart/form-data; boundary=" & boundary,
-    "Authorization": "Bearer " & t.apiKey
-  })
+  var headers: seq[HttpHeaderTuple] = @[
+    (key: "Content-Type", value: "multipart/form-data; boundary=" & boundary),
+    (key: "Authorization", value: "Bearer " & t.apiKey)
+  ]
 
   let url = t.apiBase & "/audio/transcriptions"
-  let response = await t.client.post(url, body)
-  let respBody = await response.body
+  
+  let addressRes = t.session.getAddress(url)
+  if addressRes.isErr:
+    raise newException(IOError, "Failed to resolve URL")
+  let address = addressRes.get()
 
-  if response.status != $Http200:
-    errorCF("voice", "API error", {"status": response.status, "response": respBody}.toTable)
+  let request = HttpClientRequestRef.new(
+    t.session,
+    address,
+    meth = MethodPost,
+    headers = headers,
+    body = body.toOpenArrayByte(0, body.len - 1)
+  )
+
+  let response = await request.send()
+  let respBytes = await response.getBodyBytes()
+  let respBody = cast[string](respBytes)
+
+  if response.status != 200:
+    errorCF("voice", "API error", {"status": $response.status, "response": respBody}.toTable)
     raise newException(IOError, "API error: " & respBody)
 
   let result = parseJson(respBody).to(TranscriptionResponse)

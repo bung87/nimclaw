@@ -1,11 +1,13 @@
-import std/[asyncdispatch, asyncnet, json, tables, strutils, locks]
+import chronos
+import chronos/transports/stream
+import std/[json, tables, strutils, locks]
 import base
 import ../bus, ../bus_types, ../config, ../logger
 
 type
   MaixCamChannel* = ref object of BaseChannel
-    server: AsyncSocket
-    clients: seq[AsyncSocket]
+    server: StreamServer
+    clients: seq[StreamTransport]
     lock: Lock
     host: string
     port: int
@@ -26,11 +28,14 @@ proc newMaixCamChannel*(cfg: MaixCamConfig, bus: MessageBus): MaixCamChannel =
 
 method name*(c: MaixCamChannel): string = "maixcam"
 
-proc handleClient(c: MaixCamChannel, client: AsyncSocket) {.async.} =
+proc handleClient(c: MaixCamChannel, transp: StreamTransport) {.async.} =
+  var reader = newAsyncStreamReader(transp)
+  defer: await reader.closeWait()
+  
   while c.running:
     try:
-      let line = await client.recvLine()
-      if line == "": break
+      let line = await reader.readLine()
+      if line.len == 0: break
       let msg = parseJson(line)
       let msgType = msg.getOrDefault("type").getStr()
 
@@ -66,37 +71,41 @@ proc handleClient(c: MaixCamChannel, client: AsyncSocket) {.async.} =
       break
 
   acquire(c.lock)
-  let idx = c.clients.find(client)
+  let idx = c.clients.find(transp)
   if idx != -1: c.clients.delete(idx)
   release(c.lock)
-  client.close()
+  await transp.closeWait()
+
+proc onAccept(server: StreamServer, transp: StreamTransport) {.async.} =
+  let c = cast[MaixCamChannel](server.udata)
+  if c == nil or not c.running:
+    await transp.closeWait()
+    return
+  acquire(c.lock)
+  c.clients.add(transp)
+  release(c.lock)
+  discard handleClient(c, transp)
 
 method start*(c: MaixCamChannel) {.async.} =
   infoC("maixcam", "Starting MaixCam channel server")
-  c.server = newAsyncSocket()
-  c.server.setSockOpt(OptReuseAddr, true)
   try:
-    c.server.bindAddr(Port(c.port), c.host)
-    c.server.listen()
+    let address = initTAddress(c.host, c.port)
+    c.server = createStreamServer(address, onAccept, {ReuseAddr}, udata = cast[pointer](c))
+    c.server.start()
     c.running = true
     infoCF("maixcam", "MaixCam server listening", {"host": c.host, "port": $c.port}.toTable)
-
-    discard (proc() {.async.} =
-      while c.running:
-        let client = await c.server.accept()
-        acquire(c.lock)
-        c.clients.add(client)
-        release(c.lock)
-        discard handleClient(c, client)
-    )()
   except Exception as e:
     errorCF("maixcam", "Failed to start MaixCam server", {"error": e.msg}.toTable)
 
 method stop*(c: MaixCamChannel) {.async.} =
   c.running = false
-  c.server.close()
+  if c.server != nil:
+    c.server.stop()
+    c.server = nil
   acquire(c.lock)
-  for client in c.clients: client.close()
+  for client in c.clients:
+    try: await client.closeWait()
+    except: discard
   c.clients = @[]
   release(c.lock)
 
@@ -106,7 +115,11 @@ method send*(c: MaixCamChannel, msg: OutboundMessage) {.async.} =
   let data = $payload & "\n"
   acquire(c.lock)
   for client in c.clients:
-    try: await client.send(data)
+    try: 
+      var writer = newAsyncStreamWriter(client)
+      await writer.write(data)
+      await writer.finish()
+      await writer.closeWait()
     except: discard
   release(c.lock)
 

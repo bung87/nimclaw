@@ -1,10 +1,11 @@
-import std/[os, times, strutils, locks, asyncdispatch]
+import chronos
+import std/[os, times, strutils, locks]
 
 type
   HeartbeatService* = ref object
     workspace*: string
     onHeartbeat*: proc (prompt: string): Future[void] {.async.}
-    interval*: Duration
+    interval*: chronos.Duration
     enabled*: bool
     lock*: Lock
     running*: bool
@@ -13,7 +14,7 @@ proc newHeartbeatService*(workspace: string, onHeartbeat: proc (prompt: string):
   var hs = HeartbeatService(
     workspace: workspace,
     onHeartbeat: onHeartbeat,
-    interval: initDuration(seconds = intervalS),
+    interval: chronos.seconds(intervalS),
     enabled: enabled,
     running: false
   )
@@ -51,7 +52,7 @@ proc log(hs: HeartbeatService, message: string) =
 
 proc runLoop(hs: HeartbeatService) {.async.} =
   while hs.running:
-    await sleepAsync(hs.interval.inMilliseconds.int)
+    await sleepAsync(hs.interval.milliseconds())
     if not hs.enabled or not hs.running: continue
 
     let prompt = hs.buildPrompt()

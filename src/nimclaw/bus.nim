@@ -1,4 +1,5 @@
-import std/[asyncdispatch, asyncfutures, tables, locks]
+import chronos
+import std/[tables, locks]
 import bus_types
 
 type

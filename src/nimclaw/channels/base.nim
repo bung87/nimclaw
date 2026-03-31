@@ -1,4 +1,5 @@
-import std/[asyncdispatch, strutils, tables]
+import chronos
+import std/[strutils, tables]
 import ../bus, ../bus_types
 import ../services/voice
 

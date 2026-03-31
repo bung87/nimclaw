@@ -1,4 +1,6 @@
-import std/[json, asyncdispatch, httpclient, tables, strutils, uri]
+import chronos
+import chronos/apps/http/httpclient
+import std/[json, tables, strutils, uri]
 import pkg/regex except re
 import types
 
@@ -44,13 +46,32 @@ method execute*(t: WebSearchTool, args: Table[string, JsonNode]): Future[string]
 
   let searchURL = "https://api.search.brave.com/res/v1/web/search?q=$1&count=$2".format(encodeUrl(query), count)
 
-  let client = newAsyncHttpClient(userAgent = userAgent)
-  client.headers["Accept"] = "application/json"
-  client.headers["X-Subscription-Token"] = t.apiKey
+  let session = HttpSessionRef.new()
+  var headers: seq[HttpHeaderTuple] = @[
+    (key: "Accept", value: "application/json"),
+    (key: "X-Subscription-Token", value: t.apiKey),
+    (key: "User-Agent", value: userAgent)
+  ]
 
+  var response: HttpClientResponseRef = nil
   try:
-    let response = await client.get(searchURL)
-    let body = await response.body
+    let addressRes = session.getAddress(searchURL)
+    if addressRes.isErr:
+      return "Error: failed to resolve URL"
+    let address = addressRes.get()
+
+    let request = HttpClientRequestRef.new(
+      session,
+      address,
+      meth = MethodGet,
+      headers = headers
+    )
+
+    response = await request.send()
+    let bodyBytes = await response.getBodyBytes()
+    await response.closeWait()
+    response = nil
+    let body = cast[string](bodyBytes)
     let jsonResp = parseJson(body)
 
     if not jsonResp.hasKey("web") or not jsonResp["web"].hasKey("results"):
@@ -69,10 +90,12 @@ method execute*(t: WebSearchTool, args: Table[string, JsonNode]): Future[string]
         lines.add("   " & item["description"].getStr())
 
     return lines.join("\n")
-  except Exception as e:
+  except CatchableError as e:
+    if not isNil(response):
+      await response.closeWait()
     return "Error: search failed: " & e.msg
   finally:
-    client.close()
+    await session.closeWait()
 
 type
   WebFetchTool* = ref object of Tool
@@ -122,17 +145,44 @@ method execute*(t: WebFetchTool, args: Table[string, JsonNode]): Future[string] 
     let mc = args["maxChars"].getInt()
     if mc > 100: maxChars = mc
 
-  let client = newAsyncHttpClient(userAgent = userAgent)
+  let session = HttpSessionRef.new()
+  var headers: seq[HttpHeaderTuple] = @[
+    (key: "User-Agent", value: userAgent)
+  ]
+
+  var response: HttpClientResponseRef = nil
   try:
-    let response = await client.get(urlStr)
-    let body = await response.body
-    let contentType = response.headers.getOrDefault("Content-Type")
+    let addressRes = session.getAddress(urlStr)
+    if addressRes.isErr:
+      return "Error: failed to resolve URL"
+    let address = addressRes.get()
+
+    let request = HttpClientRequestRef.new(
+      session,
+      address,
+      meth = MethodGet,
+      headers = headers
+    )
+
+    response = await request.send()
+    let bodyBytes = await response.getBodyBytes()
+    let status = response.status
+    
+    var contentType = ""
+    for (k, v) in response.headers.stringItems:
+      if k.toLowerAscii == "content-type":
+        contentType = v
+        break
+    
+    await response.closeWait()
+    response = nil
+    let body = cast[string](bodyBytes)
 
     var text = ""
     var extractor = ""
 
     if contentType.contains("application/json"):
-      text = body # Could format it if we wanted
+      text = body
       extractor = "json"
     elif contentType.contains("text/html") or body.startsWith("<!DOCTYPE") or body.toLowerAscii.startsWith("<html"):
       text = extractText(body)
@@ -147,14 +197,16 @@ method execute*(t: WebFetchTool, args: Table[string, JsonNode]): Future[string] 
 
     let resObj = %*{
       "url": urlStr,
-      "status": response.status,
+      "status": $status,
       "extractor": extractor,
       "truncated": truncated,
       "length": text.len,
       "text": text
     }
     return resObj.pretty()
-  except Exception as e:
+  except CatchableError as e:
+    if not isNil(response):
+      await response.closeWait()
     return "Error: fetch failed: " & e.msg
   finally:
-    client.close()
+    await session.closeWait()

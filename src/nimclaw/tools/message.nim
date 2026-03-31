@@ -1,4 +1,5 @@
-import std/[asyncdispatch, json, tables, strutils]
+import chronos
+import std/[json, tables, strutils]
 import types
 
 type
