@@ -1,5 +1,5 @@
 import chronos
-import std/[tables, locks, strutils]
+import std/[tables, locks]
 import base as channel_base
 import telegram, discord, whatsapp, dingtalk, maixcam, feishu, qq
 import ../bus, ../bus_types, ../config, ../logger

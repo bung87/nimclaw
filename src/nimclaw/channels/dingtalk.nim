@@ -1,6 +1,6 @@
 import chronos
 import chronos/apps/http/httpclient
-import std/[json, strutils, tables, locks]
+import std/[json, tables, locks]
 import websock/websock
 import base
 import ../bus, ../bus_types, ../config, ../logger
@@ -33,7 +33,7 @@ proc dingtalkGatewayLoop(c: DingTalkChannel) {.async.} =
   while c.running:
     try:
       if c.ws == nil:
-        await sleepAsync(5000)
+        await sleepAsync(chronos.seconds(5))
         continue
 
       let data = await c.ws.recvMsg()
@@ -45,7 +45,8 @@ proc dingtalkGatewayLoop(c: DingTalkChannel) {.async.} =
         let dataModel = msg["data"]
         let content = dataModel["text"]["content"].getStr()
         let senderID = dataModel["senderStaffId"].getStr()
-        let chatID = if dataModel["conversationType"].getStr() == "1": senderID else: dataModel["conversationId"].getStr()
+        let chatID = if dataModel["conversationType"].getStr() == "1": senderID else: dataModel[
+            "conversationId"].getStr()
 
         acquire(c.lock)
         c.sessionWebhooks[chatID] = dataModel["sessionWebhook"].getStr()
@@ -55,7 +56,7 @@ proc dingtalkGatewayLoop(c: DingTalkChannel) {.async.} =
         c.handleMessage(senderID, chatID, content)
     except CatchableError as e:
       error "Gateway error", topic = "dingtalk", error = e.msg
-      await sleepAsync(5000)
+      await sleepAsync(chronos.seconds(5))
 
 method name*(c: DingTalkChannel): string = "dingtalk"
 
@@ -71,7 +72,7 @@ method start*(c: DingTalkChannel) {.async.} =
 
 method stop*(c: DingTalkChannel) {.async.} =
   c.running = false
-  if c.ws != nil: 
+  if c.ws != nil:
     try:
       await c.ws.close()
     except: discard
@@ -102,12 +103,12 @@ method send*(c: DingTalkChannel, msg: OutboundMessage) {.async.} =
       "text": msg.content
     }
   }
-  
+
   let addressRes = c.session.getAddress(webhook)
   if addressRes.isErr:
     return
   let address = addressRes.get()
-  
+
   let bodyStr = $payload
   let request = HttpClientRequestRef.new(
     c.session,
@@ -116,7 +117,7 @@ method send*(c: DingTalkChannel, msg: OutboundMessage) {.async.} =
     headers = headers,
     body = bodyStr.toOpenArrayByte(0, bodyStr.len - 1)
   )
-  
+
   var resp: HttpClientResponseRef = nil
   try:
     resp = await request.send()

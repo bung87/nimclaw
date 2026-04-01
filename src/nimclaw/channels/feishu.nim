@@ -1,6 +1,6 @@
 import chronos
 import chronos/apps/http/httpclient
-import std/[json, strutils, tables]
+import std/[json, strutils]
 import websock/websock
 import base
 import ../bus, ../bus_types, ../config, ../logger
@@ -28,16 +28,16 @@ proc newFeishuChannel*(cfg: FeishuConfig, bus: MessageBus): FeishuChannel =
 proc getTenantAccessToken(c: FeishuChannel) {.async.} =
   let url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
   let payload = %*{"app_id": c.appID, "app_secret": c.appSecret}
-  
+
   var headers: seq[HttpHeaderTuple] = @[
     (key: "Content-Type", value: "application/json")
   ]
-  
+
   let addressRes = c.session.getAddress(url)
   if addressRes.isErr:
     return
   let address = addressRes.get()
-  
+
   let bodyStr = $payload
   let request = HttpClientRequestRef.new(
     c.session,
@@ -46,7 +46,7 @@ proc getTenantAccessToken(c: FeishuChannel) {.async.} =
     headers = headers,
     body = bodyStr.toOpenArrayByte(0, bodyStr.len - 1)
   )
-  
+
   var response: HttpClientResponseRef = nil
   try:
     response = await request.send()
@@ -69,7 +69,7 @@ proc feishuGatewayLoop(c: FeishuChannel) {.async.} =
   while c.running:
     try:
       if c.ws == nil:
-        await sleepAsync(5000)
+        await sleepAsync(chronos.seconds(5))
         continue
       let data = await c.ws.recvMsg()
       if data.len == 0: break
@@ -100,7 +100,7 @@ proc feishuGatewayLoop(c: FeishuChannel) {.async.} =
 
     except CatchableError as e:
       error "Gateway error", topic = "feishu", error = e.msg
-      await sleepAsync(5000)
+      await sleepAsync(chronos.seconds(5))
 
 method name*(c: FeishuChannel): string = "feishu"
 
@@ -112,7 +112,7 @@ method start*(c: FeishuChannel) {.async.} =
   var headers: seq[HttpHeaderTuple] = @[
     (key: "Authorization", value: "Bearer " & c.token)
   ]
-  
+
   let url = "https://open.feishu.cn/open-apis/ws/v1/endpoint"
   let addressRes = c.session.getAddress(url)
   if addressRes.isErr:
@@ -120,14 +120,14 @@ method start*(c: FeishuChannel) {.async.} =
     info "Feishu started in send-only mode (WS failed)", topic = "feishu"
     return
   let address = addressRes.get()
-  
+
   let request = HttpClientRequestRef.new(
     c.session,
     address,
     meth = MethodPost,
     headers = headers
   )
-  
+
   var response: HttpClientResponseRef = nil
   try:
     response = await request.send()
@@ -145,7 +145,7 @@ method start*(c: FeishuChannel) {.async.} =
         let parts = wsHost.split("/", 1)
         wsHost = parts[0]
         wsPath = "/" & parts[1]
-      
+
       c.ws = await WebSocket.connect(wsHost, wsPath, secure = wsUrl.startsWith("wss"))
       c.running = true
       discard feishuGatewayLoop(c)
@@ -161,7 +161,7 @@ method start*(c: FeishuChannel) {.async.} =
 
 method stop*(c: FeishuChannel) {.async.} =
   c.running = false
-  if c.ws != nil: 
+  if c.ws != nil:
     try:
       await c.ws.close()
     except: discard
@@ -172,24 +172,24 @@ method stop*(c: FeishuChannel) {.async.} =
 
 method send*(c: FeishuChannel, msg: OutboundMessage) {.async.} =
   if not c.running: return
-  
+
   var headers: seq[HttpHeaderTuple] = @[
     (key: "Authorization", value: "Bearer " & c.token),
     (key: "Content-Type", value: "application/json")
   ]
-  
+
   let url = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id"
   let payload = %*{
     "receive_id": msg.chat_id,
     "msg_type": "text",
     "content": $ %*{"text": msg.content}
   }
-  
+
   let addressRes = c.session.getAddress(url)
   if addressRes.isErr:
     return
   let address = addressRes.get()
-  
+
   let bodyStr = $payload
   let request = HttpClientRequestRef.new(
     c.session,
@@ -198,7 +198,7 @@ method send*(c: FeishuChannel, msg: OutboundMessage) {.async.} =
     headers = headers,
     body = bodyStr.toOpenArrayByte(0, bodyStr.len - 1)
   )
-  
+
   var resp: HttpClientResponseRef = nil
   try:
     resp = await request.send()

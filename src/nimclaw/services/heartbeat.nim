@@ -10,7 +10,8 @@ type
     lock*: Lock
     running*: bool
 
-proc newHeartbeatService*(workspace: string, onHeartbeat: proc (prompt: string): Future[void] {.async.}, intervalS: int, enabled: bool): HeartbeatService =
+proc newHeartbeatService*(workspace: string, onHeartbeat: proc (prompt: string): Future[void] {.async.}, intervalS: int,
+    enabled: bool): HeartbeatService =
   var hs = HeartbeatService(
     workspace: workspace,
     onHeartbeat: onHeartbeat,
@@ -52,7 +53,7 @@ proc log(hs: HeartbeatService, message: string) =
 
 proc runLoop(hs: HeartbeatService) {.async.} =
   while hs.running:
-    await sleepAsync(hs.interval.milliseconds())
+    await sleepAsync(hs.interval)
     if not hs.enabled or not hs.running: continue
 
     let prompt = hs.buildPrompt()

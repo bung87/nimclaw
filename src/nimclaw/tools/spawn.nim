@@ -1,5 +1,5 @@
 import chronos
-import std/[json, tables, strutils]
+import std/[json, tables]
 import types
 import subagent
 
@@ -25,12 +25,12 @@ method parameters*(t: SpawnTool): Table[string, JsonNode] =
       "task": {
         "type": "string",
         "description": "The task for subagent to complete"
-      },
-      "label": {
-        "type": "string",
-        "description": "Optional short label for the task (for display)"
-      }
     },
+    "label": {
+      "type": "string",
+      "description": "Optional short label for the task (for display)"
+    }
+  },
     "required": %["task"]
   }.toTable
 

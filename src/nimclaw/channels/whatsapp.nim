@@ -39,7 +39,7 @@ proc listen(c: WhatsAppChannel) {.async.} =
         c.handleMessage(senderID, chatID, content, @[], metadata)
     except CatchableError as e:
       error "WhatsApp read error", topic = "whatsapp", error = e.msg
-      await sleepAsync(2000)
+      await sleepAsync(chronos.seconds(2))
 
 method start*(c: WhatsAppChannel) {.async.} =
   info "Starting WhatsApp channel", topic = "whatsapp", url = c.url
@@ -51,7 +51,7 @@ method start*(c: WhatsAppChannel) {.async.} =
       let parts = wsHost.split("/", 1)
       wsHost = parts[0]
       wsPath = "/" & parts[1]
-    
+
     c.conn = await WebSocket.connect(wsHost, wsPath, secure = c.url.startsWith("wss"))
     c.running = true
     discard listen(c)
@@ -61,7 +61,7 @@ method start*(c: WhatsAppChannel) {.async.} =
 
 method stop*(c: WhatsAppChannel) {.async.} =
   c.running = false
-  if c.conn != nil: 
+  if c.conn != nil:
     try:
       await c.conn.close()
     except: discard

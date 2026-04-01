@@ -1,5 +1,5 @@
 import chronos
-import std/[strutils, tables]
+import std/tables
 import ../bus, ../bus_types
 import ../services/voice
 
@@ -38,7 +38,8 @@ method isAllowed*(c: BaseChannel, senderID: string): bool {.raises: [].} =
     if senderID == allowed: return true
   return false
 
-proc handleMessage*(c: BaseChannel, senderID, chatID, content: string, media: seq[string] = @[], metadata: Table[string, string] = initTable[string, string]()) {.raises: [].} =
+proc handleMessage*(c: BaseChannel, senderID, chatID, content: string, media: seq[string] = @[], metadata: Table[string,
+    string] = initTable[string, string]()) {.raises: [].} =
   if not c.isAllowed(senderID): return
 
   let sessionKey = c.name & ":" & chatID

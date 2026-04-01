@@ -1,5 +1,5 @@
 import chronos
-import std/[tables, json, locks, times, strutils]
+import std/[tables, json, locks, times]
 import types
 import ../logger
 import ../providers/types as providers_types
@@ -60,7 +60,8 @@ proc getDefinitions*(r: ToolRegistry): seq[ToolDefinition] {.raises: [].} =
   for tool in r.tools.values:
     result.add(toolToSchema(tool))
 
-proc executeWithContext*(r: ToolRegistry, name: string, args: Table[string, JsonNode], channel, chatID: string): Future[string] {.async.} =
+proc executeWithContext*(r: ToolRegistry, name: string, args: Table[string, JsonNode], channel, chatID: string): Future[
+    string] {.async.} =
   info "Tool execution started", topic = "tool", tool = name, args = $args
 
   let (tool, ok) = r.get(name)
@@ -75,14 +76,14 @@ proc executeWithContext*(r: ToolRegistry, name: string, args: Table[string, Json
       discard
 
   let start = now()
-  var result = ""
+  var toolResult = ""
   try:
-    result = await tool.execute(args)
+    toolResult = await tool.execute(args)
   except CatchableError as e:
     let duration = (now() - start).inMilliseconds
     error "Tool execution failed", topic = "tool", tool = name, duration = $duration, error = e.msg
     return "Error: " & e.msg
 
   let duration = (now() - start).inMilliseconds
-  info "Tool execution completed", topic = "tool", tool = name, duration_ms = $duration, result_length = $result.len
-  return result
+  info "Tool execution completed", topic = "tool", tool = name, duration_ms = $duration, result_length = $toolResult.len
+  return toolResult

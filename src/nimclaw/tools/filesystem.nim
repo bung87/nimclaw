@@ -1,5 +1,5 @@
 import chronos
-import std/[os, json, tables, strutils]
+import std/[os, json, tables]
 import types
 import ../security
 
@@ -89,13 +89,13 @@ method execute*(t: ListDirTool, args: Table[string, JsonNode]): Future[string] {
   let path = if args.hasKey("path"): args["path"].getStr() else: "."
   try:
     let safePath = validatePath(path)
-    var result = ""
+    var output = ""
     for kind, entry in walkDir(safePath):
       if kind == pcDir or kind == pcLinkToDir:
-        result.add("DIR:  " & lastPathPart(entry) & "\n")
+        output.add("DIR:  " & lastPathPart(entry) & "\n")
       else:
-        result.add("FILE: " & lastPathPart(entry) & "\n")
-    return result
+        output.add("FILE: " & lastPathPart(entry) & "\n")
+    return output
   except ValidationError as e:
     return "Error: " & e.msg
   except CatchableError as e:

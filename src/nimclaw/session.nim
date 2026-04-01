@@ -98,12 +98,12 @@ proc validateSessionKey*(key: string): bool =
 
 proc sanitizeSessionKey*(key: string): string =
   ## Sanitizes a session key by removing dangerous characters
-  var result = key
-  result = result.multiReplace(("../", ""), ("..", ""), ("\\", ""), ("/", "_"), ("|", "_"), ("*", "_"), ("?", "_"))
-  result = result.replace(re2"[^a-zA-Z0-9:_\-]", "_")
-  if result.len > MAX_SESSION_KEY_LENGTH:
-    result = result[0..<MAX_SESSION_KEY_LENGTH]
-  return result
+  var sanitized = key
+  sanitized = sanitized.multiReplace(("../", ""), ("..", ""), ("\\", ""), ("/", "_"), ("|", "_"), ("*", "_"), ("?", "_"))
+  sanitized = sanitized.replace(re2"[^a-zA-Z0-9:_\-]", "_")
+  if sanitized.len > MAX_SESSION_KEY_LENGTH:
+    sanitized = sanitized[0..<MAX_SESSION_KEY_LENGTH]
+  return sanitized
 
 proc getOrCreate*(sm: SessionManager, key: string): Session =
   ## Get an existing session or create a new one with the given key

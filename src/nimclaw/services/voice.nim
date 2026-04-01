@@ -1,6 +1,6 @@
 import chronos
 import chronos/apps/http/httpclient
-import std/[json, strutils, os, tables, times]
+import std/[json, strutils, os, times]
 import ../logger
 
 type
@@ -52,7 +52,7 @@ proc transcribe*(t: GroqTranscriber, audioFilePath: string): Future[Transcriptio
   ]
 
   let url = t.apiBase & "/audio/transcriptions"
-  
+
   let addressRes = t.session.getAddress(url)
   if addressRes.isErr:
     raise newException(IOError, "Failed to resolve URL")
@@ -74,6 +74,6 @@ proc transcribe*(t: GroqTranscriber, audioFilePath: string): Future[Transcriptio
     error "API error", topic = "voice", status = $response.status, response = respBody
     raise newException(IOError, "API error: " & respBody)
 
-  let result = parseJson(respBody).to(TranscriptionResponse)
-  info "Transcription completed successfully", topic = "voice", text_length = $result.text.len
-  return result
+  let transcription = parseJson(respBody).to(TranscriptionResponse)
+  info "Transcription completed successfully", topic = "voice", text_length = $transcription.text.len
+  return transcription

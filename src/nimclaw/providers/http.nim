@@ -12,13 +12,15 @@ type
   HTTPProvider* = ref object of LLMProvider
     apiKey*: string
     apiBase*: string
+    provider*: string # provider type: "openai", "ollama", etc.
     session*: HttpSessionRef
 
-proc newHTTPProvider*(apiKey, apiBase: string): HTTPProvider =
+proc newHTTPProvider*(apiKey, apiBase, provider: string): HTTPProvider =
   let session = HttpSessionRef.new()
   HTTPProvider(
     apiKey: apiKey,
     apiBase: apiBase,
+    provider: provider,
     session: session
   )
 
@@ -40,9 +42,9 @@ method chat*(p: HTTPProvider, messages: seq[Message], tools: seq[ToolDefinition]
     requestBody["tool_choice"] = %"auto"
 
   if options.hasKey("max_tokens"):
-    let lowerModel = model.toLowerAscii
-    if lowerModel.contains("glm") or lowerModel.contains("o1"):
-      requestBody["max_completion_tokens"] = options["max_tokens"]
+    # GLM, O1, and Ollama use different parameter names or don't support max_tokens
+    if p.provider in ["zhipu", "ollama"]:
+      discard # Don't send max_tokens for these providers
     else:
       requestBody["max_tokens"] = options["max_tokens"]
 
@@ -51,6 +53,8 @@ method chat*(p: HTTPProvider, messages: seq[Message], tools: seq[ToolDefinition]
 
   let url = p.apiBase & "/chat/completions"
   let bodyStr = $requestBody
+  echo "DEBUG REQUEST: ", bodyStr
+  echo "DEBUG PROVIDER: ", p.provider
 
   var headers: seq[HttpHeaderTuple] = @[]
   headers.add((key: "Content-Type", value: "application/json"))
@@ -76,6 +80,7 @@ method chat*(p: HTTPProvider, messages: seq[Message], tools: seq[ToolDefinition]
   let bodyText = cast[string](bodyBytes)
 
   if response.status < 200 or response.status >= 300:
+    echo "DEBUG ERROR: ", bodyText
     raise newException(IOError, "API error ($1): $2".format($response.status, bodyText))
 
   # Validate JSON response size before parsing
@@ -142,50 +147,44 @@ method chat*(p: HTTPProvider, messages: seq[Message], tools: seq[ToolDefinition]
   return llmResp
 
 proc createProvider*(cfg: Config): LLMProvider =
-  let model = cfg.agents.defaults.model
+  let provider = cfg.agents.defaults.provider
   var apiKey, apiBase: string
-  let lowerModel = model.toLowerAscii
 
-  case model:
-  of "":
-    discard # Should not happen
+  case provider:
+  of "openrouter":
+    apiKey = cfg.providers.openrouter.api_key
+    apiBase = if cfg.providers.openrouter.api_base != "": cfg.providers.openrouter.api_base else: "https://openrouter.ai/api/v1"
+  of "anthropic":
+    apiKey = cfg.providers.anthropic.api_key
+    apiBase = if cfg.providers.anthropic.api_base != "": cfg.providers.anthropic.api_base else: "https://api.anthropic.com/v1"
+  of "openai":
+    apiKey = cfg.providers.openai.api_key
+    apiBase = if cfg.providers.openai.api_base != "": cfg.providers.openai.api_base else: "https://api.openai.com/v1"
+  of "gemini":
+    apiKey = cfg.providers.gemini.api_key
+    apiBase = if cfg.providers.gemini.api_base != "": cfg.providers.gemini.api_base else: "https://generativelanguage.googleapis.com/v1beta"
+  of "zhipu":
+    apiKey = cfg.providers.zhipu.api_key
+    apiBase = if cfg.providers.zhipu.api_base != "": cfg.providers.zhipu.api_base else: "https://open.bigmodel.cn/api/paas/v4"
+  of "groq":
+    apiKey = cfg.providers.groq.api_key
+    apiBase = if cfg.providers.groq.api_base != "": cfg.providers.groq.api_base else: "https://api.groq.com/openai/v1"
+  of "vllm":
+    apiKey = cfg.providers.vllm.api_key
+    apiBase = cfg.providers.vllm.api_base
+  of "kimi":
+    apiKey = cfg.providers.kimi.api_key
+    apiBase = if cfg.providers.kimi.api_base != "": cfg.providers.kimi.api_base else: "https://api.moonshot.cn/v1"
+  of "ollama":
+    apiKey = cfg.providers.ollama.api_key
+    apiBase = if cfg.providers.ollama.api_base != "": cfg.providers.ollama.api_base else: "http://localhost:11434/v1"
   else:
-    if model.startsWith("openrouter/") or model.startsWith("anthropic/") or model.startsWith("openai/") or
-       model.startsWith("meta-llama/") or model.startsWith("deepseek/") or model.startsWith("google/"):
-      apiKey = cfg.providers.openrouter.api_key
-      apiBase = if cfg.providers.openrouter.api_base != "": cfg.providers.openrouter.api_base else: "https://openrouter.ai/api/v1"
-    elif (lowerModel.contains("claude") or model.startsWith("anthropic/")) and cfg.providers.anthropic.api_key != "":
-      apiKey = cfg.providers.anthropic.api_key
-      apiBase = if cfg.providers.anthropic.api_base != "": cfg.providers.anthropic.api_base else: "https://api.anthropic.com/v1"
-    elif (lowerModel.contains("gpt") or model.startsWith("openai/")) and cfg.providers.openai.api_key != "":
-      apiKey = cfg.providers.openai.api_key
-      apiBase = if cfg.providers.openai.api_base != "": cfg.providers.openai.api_base else: "https://api.openai.com/v1"
-    elif (lowerModel.contains("gemini") or model.startsWith("google/")) and cfg.providers.gemini.api_key != "":
-      apiKey = cfg.providers.gemini.api_key
-      apiBase = if cfg.providers.gemini.api_base != "": cfg.providers.gemini.api_base else: "https://generativelanguage.googleapis.com/v1beta"
-    elif (lowerModel.contains("glm") or lowerModel.contains("zhipu")) and cfg.providers.zhipu.api_key != "":
-      apiKey = cfg.providers.zhipu.api_key
-      apiBase = if cfg.providers.zhipu.api_base != "": cfg.providers.zhipu.api_base else: "https://open.bigmodel.cn/api/paas/v4"
-    elif (lowerModel.contains("groq") or model.startsWith("groq/")) and cfg.providers.groq.api_key != "":
-      apiKey = cfg.providers.groq.api_key
-      apiBase = if cfg.providers.groq.api_base != "": cfg.providers.groq.api_base else: "https://api.groq.com/openai/v1"
-    elif cfg.providers.vllm.api_base != "":
-      apiKey = cfg.providers.vllm.api_key
-      apiBase = cfg.providers.vllm.api_base
-    elif (lowerModel.contains("kimi") or model.startsWith("moonshot/")) and cfg.providers.kimi.api_key != "":
-      apiKey = cfg.providers.kimi.api_key
-      apiBase = if cfg.providers.kimi.api_base != "": cfg.providers.kimi.api_base else: "https://api.moonshot.cn/v1"
-    else:
-      if cfg.providers.openrouter.api_key != "":
-        apiKey = cfg.providers.openrouter.api_key
-        apiBase = if cfg.providers.openrouter.api_base != "": cfg.providers.openrouter.api_base else: "https://openrouter.ai/api/v1"
-      else:
-        raise newException(ValueError, "no API key configured for model: " & model)
+    raise newException(ValueError, "unknown provider: " & provider)
 
-  if apiKey == "" and not model.startsWith("bedrock/"):
-    raise newException(ValueError, "no API key configured for provider (model: " & model & ")")
+  if apiKey == "" and provider != "ollama":
+    raise newException(ValueError, "no API key configured for provider: " & provider)
 
   if apiBase == "":
-    raise newException(ValueError, "no API base configured for provider (model: " & model & ")")
+    raise newException(ValueError, "no API base configured for provider: " & provider)
 
-  return newHTTPProvider(apiKey, apiBase)
+  return newHTTPProvider(apiKey, apiBase, provider)

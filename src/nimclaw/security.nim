@@ -1,7 +1,7 @@
 ## Security Utilities
 ## Input validation and path sanitization functions
 
-import std/[strutils, os, unicode]
+import std/[strutils, os]
 import pkg/regex except re
 
 const
@@ -79,14 +79,14 @@ proc sanitizePath*(path: string): string =
     return ""
   if path.len > MaxPathLength:
     return path[0..<MaxPathLength]
-  
-  var result = path.normalizedPath()
+
+  var sanitized = path.normalizedPath()
   # Remove path traversal attempts
-  result = result.replace("..", "")
-  result = result.replace("~", "")
+  sanitized = sanitized.replace("..", "")
+  sanitized = sanitized.replace("~", "")
   # Remove null bytes
-  result = result.replace("\0", "")
-  return result
+  sanitized = sanitized.replace("\0", "")
+  return sanitized
 
 proc validatePath*(path: string): string =
   ## Validate a path and raise errors if unsafe

@@ -90,7 +90,8 @@ proc newCronService*(storePath: string, onJob: JobHandler): CronService =
   cs.loadStore()
   return cs
 
-proc addJob*(cs: CronService, name: string, schedule: CronSchedule, message: string, deliver: bool, channel, to: string): Future[CronJob] {.async.} =
+proc addJob*(cs: CronService, name: string, schedule: CronSchedule, message: string, deliver: bool, channel,
+    to: string): Future[CronJob] {.async.} =
   acquire(cs.lock)
   defer: release(cs.lock)
 
@@ -188,7 +189,7 @@ proc checkJobs(cs: CronService) {.async.} =
       cs.saveStoreUnsafe()
       release(cs.lock)
 
-    await sleepAsync(1000)
+    await sleepAsync(chronos.seconds(1))
 
 proc start*(cs: CronService) {.async.} =
   cs.running = true

@@ -90,7 +90,8 @@ proc estimateTokens(messages: seq[providers_types.Message]): int =
     total += m.content.len div 4
   return total
 
-proc summarizeBatch(al: AgentLoop, batch: seq[providers_types.Message], existingSummary: string): Future[string] {.async.} =
+proc summarizeBatch(al: AgentLoop, batch: seq[providers_types.Message], existingSummary: string): Future[
+    string] {.async.} =
   var prompt = "Provide a concise summary of this conversation segment, preserving core context and key points.\n"
   if existingSummary != "":
     prompt.add("Existing context: " & existingSummary & "\n")
@@ -98,7 +99,8 @@ proc summarizeBatch(al: AgentLoop, batch: seq[providers_types.Message], existing
   for m in batch:
     prompt.add(m.role & ": " & m.content & "\n")
 
-  let response = await al.provider.chat(@[providers_types.Message(role: "user", content: prompt)], @[], al.model, initTable[string, JsonNode]())
+  let response = await al.provider.chat(@[providers_types.Message(role: "user", content: prompt)], @[], al.model,
+      initTable[string, JsonNode]())
   return response.content
 
 proc summarizeSession(al: AgentLoop, sessionKey: string) {.async.} =
@@ -147,7 +149,8 @@ proc maybeSummarize(al: AgentLoop, sessionKey: string) =
   else:
     release(al.summarizingLock)
 
-proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts: ProcessOptions): Future[(string, int, seq[providers_types.Message])] {.async.} =
+proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts: ProcessOptions): Future[(string, int,
+    seq[providers_types.Message])] {.async.} =
   var iteration = 0
   var finalContent = ""
   var currentMessages = messages
@@ -168,7 +171,8 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
       info "LLM response without tool calls", topic = "agent", iteration = $iteration
       break
 
-    var assistantMsg = providers_types.Message(role: "assistant", content: response.content, tool_calls: response.tool_calls)
+    var assistantMsg = providers_types.Message(role: "assistant", content: response.content,
+        tool_calls: response.tool_calls)
     currentMessages.add(assistantMsg)
     al.sessions.addFullMessage(opts.sessionKey, assistantMsg)
 
@@ -178,13 +182,13 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
         warn "Skipping tool call with empty name", topic = "agent", iteration = $iteration
         continue
       info "Tool call", topic = "agent", name = tc.name, iteration = $iteration
-      let result = await al.tools.executeWithContext(tc.name, tc.arguments, opts.channel, opts.chatID)
-      if result.startsWith("Error: "):
-        allToolErrors.add(tc.name & ": " & result)
-      let toolResultMsg = providers_types.Message(role: "tool", content: result, tool_call_id: tc.id)
+      let toolResult = await al.tools.executeWithContext(tc.name, tc.arguments, opts.channel, opts.chatID)
+      if toolResult.startsWith("Error: "):
+        allToolErrors.add(tc.name & ": " & toolResult)
+      let toolResultMsg = providers_types.Message(role: "tool", content: toolResult, tool_call_id: tc.id)
       currentMessages.add(toolResultMsg)
       al.sessions.addFullMessage(opts.sessionKey, toolResultMsg)
-    
+
     # If all tools failed, return error directly to user
     if allToolErrors.len > 0 and allToolErrors.len == response.tool_calls.len:
       finalContent = allToolErrors.join("\n")
@@ -218,11 +222,13 @@ proc runAgentLoop*(al: AgentLoop, opts: ProcessOptions): Future[string] {.async.
   if opts.sendResponse:
     al.bus.publishOutbound(OutboundMessage(channel: opts.channel, chat_id: opts.chatID, content: finalContent))
 
-  info "Response", topic = "agent", content = truncate(finalContent, 120), session_key = opts.sessionKey, iterations = $iteration
+  info "Response", topic = "agent", content = truncate(finalContent, 120), session_key = opts.sessionKey,
+      iterations = $iteration
   return finalContent
 
 proc processMessage*(al: AgentLoop, msg: InboundMessage): Future[string] {.async.} =
-  info "Processing message", topic = "agent", channel = msg.channel, sender = msg.sender_id, session_key = msg.session_key
+  info "Processing message", topic = "agent", channel = msg.channel, sender = msg.sender_id,
+      session_key = msg.session_key
 
   # update tool contexts
   try:
@@ -253,7 +259,8 @@ proc processMessage*(al: AgentLoop, msg: InboundMessage): Future[string] {.async
   ))
 
 proc processDirect*(al: AgentLoop, content, sessionKey: string): Future[string] {.async.} =
-  let msg = InboundMessage(channel: "cli", sender_id: "user", chat_id: "direct", content: content, session_key: sessionKey)
+  let msg = InboundMessage(channel: "cli", sender_id: "user", chat_id: "direct", content: content,
+      session_key: sessionKey)
   return await al.processMessage(msg)
 
 proc run*(al: AgentLoop) {.async.} =

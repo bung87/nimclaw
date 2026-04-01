@@ -132,7 +132,7 @@ method execute*(t: ExecTool, args: Table[string, JsonNode]): Future[string] {.as
     if data != "":
       output.add(data)
 
-    await sleepAsync(50)
+    await sleepAsync(chronos.milliseconds(50))
 
   # Final read
   output.add(p.outputStream.readAll())

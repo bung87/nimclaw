@@ -5,6 +5,7 @@ type
   AgentDefaults* = object
     workspace*: string
     model*: string
+    provider*: string # explicit provider: "openai", "anthropic", "ollama", etc.
     max_tokens*: int
     temperature*: float64
     max_tool_iterations*: int
@@ -75,6 +76,7 @@ type
     vllm*: ProviderConfig
     gemini*: ProviderConfig
     kimi*: ProviderConfig
+    ollama*: ProviderConfig
 
   GatewayConfig* = object
     host*: string
@@ -112,11 +114,12 @@ proc defaultConfig*(): Config =
       defaults: AgentDefaults(
         workspace: "~/.picoclaw/workspace",
         model: "glm-4.7",
+        provider: "zhipu",
         max_tokens: 8192,
         temperature: 0.7,
         max_tool_iterations: 20
-      )
-    ),
+    )
+  ),
     channels: ChannelsConfig(
       whatsapp: WhatsAppConfig(enabled: false, bridge_url: "ws://localhost:3001"),
       telegram: TelegramConfig(enabled: false),
@@ -138,7 +141,7 @@ proc parseEnv*(cfg: var Config) =
   # Simple manual environment variable parsing to match Go's env library
   if existsEnv("PICOCLAW_AGENTS_DEFAULTS_WORKSPACE"): cfg.agents.defaults.workspace = getEnv("PICOCLAW_AGENTS_DEFAULTS_WORKSPACE")
   if existsEnv("PICOCLAW_AGENTS_DEFAULTS_MODEL"): cfg.agents.defaults.model = getEnv("PICOCLAW_AGENTS_DEFAULTS_MODEL")
-  # Add more as needed, but for now we focus on core features
+  if existsEnv("PICOCLAW_AGENTS_DEFAULTS_PROVIDER"): cfg.agents.defaults.provider = getEnv("PICOCLAW_AGENTS_DEFAULTS_PROVIDER")
 
 proc loadConfig*(path: string): Config =
   result = defaultConfig()

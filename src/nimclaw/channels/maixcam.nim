@@ -31,7 +31,7 @@ method name*(c: MaixCamChannel): string = "maixcam"
 proc handleClient(c: MaixCamChannel, transp: StreamTransport) {.async.} =
   var reader = newAsyncStreamReader(transp)
   defer: await reader.closeWait()
-  
+
   while c.running:
     try:
       let line = await reader.readLine()
@@ -76,7 +76,7 @@ proc handleClient(c: MaixCamChannel, transp: StreamTransport) {.async.} =
   release(c.lock)
   await transp.closeWait()
 
-proc onAccept(server: StreamServer, transp: StreamTransport) {.async.} =
+proc onAccept(server: StreamServer, transp: StreamTransport) {.async: (raises: []).} =
   let c = cast[MaixCamChannel](server.udata)
   if c == nil or not c.running:
     await transp.closeWait()
@@ -115,7 +115,7 @@ method send*(c: MaixCamChannel, msg: OutboundMessage) {.async.} =
   let data = $payload & "\n"
   acquire(c.lock)
   for client in c.clients:
-    try: 
+    try:
       var writer = newAsyncStreamWriter(client)
       await writer.write(data)
       await writer.finish()

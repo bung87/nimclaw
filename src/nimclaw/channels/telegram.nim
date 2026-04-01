@@ -10,7 +10,7 @@ type
     token*: string
     lastUpdateID: int
     transcriber*: GroqTranscriber
-    placeholders: Table[string, int] # chatID -> messageID
+    placeholders: Table[string, int]  # chatID -> messageID
     stopThinking: Table[string, bool] # chatID -> stopped
     session*: HttpSessionRef
 
@@ -50,13 +50,13 @@ proc apiCall(c: TelegramChannel, method_name: string, payload: JsonNode): Future
     (key: "Content-Type", value: "application/json")
   ]
   let url = "https://api.telegram.org/bot$1/$2".format(c.token, method_name)
-  
+
   let addressRes = c.session.getAddress(url)
   if addressRes.isErr:
     error "Failed to resolve URL", topic = "telegram", url = url
     return %*{"ok": false}
   let address = addressRes.get()
-  
+
   let bodyStr = $payload
   let request = HttpClientRequestRef.new(
     c.session,
@@ -65,7 +65,7 @@ proc apiCall(c: TelegramChannel, method_name: string, payload: JsonNode): Future
     headers = headers,
     body = bodyStr.toOpenArrayByte(0, bodyStr.len - 1)
   )
-  
+
   var response: HttpClientResponseRef = nil
   try:
     response = await request.send()
@@ -92,13 +92,13 @@ proc downloadFile(c: TelegramChannel, fileID: string, ext: string): Future[strin
   let addressRes = c.session.getAddress(url)
   if addressRes.isErr: return ""
   let address = addressRes.get()
-  
+
   let request = HttpClientRequestRef.new(
     c.session,
     address,
     meth = MethodGet
   )
-  
+
   var response: HttpClientResponseRef = nil
   try:
     response = await request.send()
@@ -175,7 +175,7 @@ proc handleTelegramUpdate(c: TelegramChannel, update: JsonNode) {.async.} =
       let emotes = ["💭", "🤔", "☁️"]
       var i = 0
       while c.stopThinking.hasKey(chatID) and not c.stopThinking[chatID]:
-        await sleepAsync(2000)
+        await sleepAsync(chronos.milliseconds(2000))
         if not c.stopThinking.hasKey(chatID) or c.stopThinking[chatID]: break
         i += 1
         let text = "Thinking" & dots[i mod dots.len] & " " & emotes[i mod emotes.len]
@@ -197,7 +197,7 @@ proc poll(c: TelegramChannel) {.async.} =
           discard handleTelegramUpdate(c, update)
     except CatchableError as e:
       error "Polling error", topic = "telegram", error = e.msg
-      await sleepAsync(5000)
+      await sleepAsync(chronos.seconds(5))
 
 method name*(c: TelegramChannel): string = "telegram"
 

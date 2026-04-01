@@ -1,7 +1,6 @@
 import chronos
 import chronos/apps/http/httpclient
-import std/[json, strutils, tables]
-import system/memory
+import std/[json, strutils]
 import websock/[websock, session, types]
 import base
 import ../bus, ../bus_types, ../config, ../logger, ../services/voice
@@ -27,18 +26,19 @@ proc newDiscordChannel*(cfg: DiscordConfig, bus: MessageBus): DiscordChannel =
 method setTranscriber*(c: DiscordChannel, transcriber: GroqTranscriber) =
   c.transcriber = transcriber
 
-proc apiCall(c: DiscordChannel, method_name: string, url_part: string, payload: JsonNode = nil, meth: string = "POST"): Future[JsonNode] {.async.} =
+proc apiCall(c: DiscordChannel, method_name: string, url_part: string, payload: JsonNode = nil,
+    meth: string = "POST"): Future[JsonNode] {.async.} =
   var headers: seq[HttpHeaderTuple] = @[
     (key: "Authorization", value: "Bot " & c.token),
     (key: "Content-Type", value: "application/json")
   ]
   let url = "https://discord.com/api/v10/" & url_part
-  
+
   let addressRes = c.session.getAddress(url)
   if addressRes.isErr:
     return %*{}
   let address = addressRes.get()
-  
+
   var bodyData: seq[byte] = @[]
   if payload != nil:
     let s = $payload
@@ -51,7 +51,7 @@ proc apiCall(c: DiscordChannel, method_name: string, url_part: string, payload: 
     headers = headers,
     body = bodyData
   )
-  
+
   var response: HttpClientResponseRef = nil
   try:
     response = await request.send()
@@ -79,17 +79,17 @@ proc gatewayLoop(c: DiscordChannel) {.async.} =
         # Start heartbeating (simplified)
         discard (proc() {.async.} =
           while c.running:
-            await sleepAsync(interval)
-            if c.ws != nil: await c.ws.send($ %*{"op": 1, "d": nil})
+            await sleepAsync(chronos.milliseconds(interval))
+            if c.ws != nil: await c.ws.send( $ %*{"op": 1, "d": nil})
         )()
         # Identify
-        await c.ws.send($ %*{
+        await c.ws.send( $ %*{
           "op": 2,
           "d": {
             "token": c.token,
             "intents": 33280, # GuildMessages | DirectMessages | MessageContent
-            "properties": {"os": "linux", "browser": "nimclaw", "device": "nimclaw"}
-          }
+          "properties": {"os": "linux", "browser": "nimclaw", "device": "nimclaw"}
+        }
         })
 
       elif op == 0: # Dispatch
@@ -104,14 +104,14 @@ proc gatewayLoop(c: DiscordChannel) {.async.} =
 
     except CatchableError as e:
       error "Gateway error", topic = "discord", error = e.msg
-      await sleepAsync(5000)
+      await sleepAsync(chronos.seconds(5))
 
 method name*(c: DiscordChannel): string = "discord"
 
 method start*(c: DiscordChannel) {.async.} =
   info "Starting Discord bot (Gateway mode)...", topic = "discord"
   try:
-    let gatewayRes = await c.apiCall("GET", "gateway/bot", meth="GET")
+    let gatewayRes = await c.apiCall("GET", "gateway/bot", meth = "GET")
     let url = gatewayRes["url"].getStr()
     # Parse gateway URL
     var gatewayHost = url.replace("wss://", "").replace("ws://", "")
@@ -120,7 +120,7 @@ method start*(c: DiscordChannel) {.async.} =
       let parts = gatewayHost.split("/", 1)
       gatewayHost = parts[0]
       gatewayPath = "/" & parts[1] & gatewayPath
-    
+
     c.ws = await WebSocket.connect(gatewayHost, gatewayPath, secure = true)
     c.running = true
     discard gatewayLoop(c)
@@ -129,7 +129,7 @@ method start*(c: DiscordChannel) {.async.} =
 
 method stop*(c: DiscordChannel) {.async.} =
   c.running = false
-  if c.ws != nil: 
+  if c.ws != nil:
     try:
       await c.ws.close()
     except: discard

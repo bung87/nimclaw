@@ -33,16 +33,16 @@ proc newQQChannel*(cfg: QQConfig, bus: MessageBus): QQChannel =
 proc getAccessToken(c: QQChannel) {.async.} =
   let url = "https://bots.qq.com/app/getAppAccessToken"
   let payload = %*{"appId": c.appID, "clientSecret": c.appSecret}
-  
+
   var headers: seq[HttpHeaderTuple] = @[
     (key: "Content-Type", value: "application/json")
   ]
-  
+
   let addressRes = c.session.getAddress(url)
   if addressRes.isErr:
     return
   let address = addressRes.get()
-  
+
   let bodyStr = $payload
   let request = HttpClientRequestRef.new(
     c.session,
@@ -51,7 +51,7 @@ proc getAccessToken(c: QQChannel) {.async.} =
     headers = headers,
     body = bodyStr.toOpenArrayByte(0, bodyStr.len - 1)
   )
-  
+
   var response: HttpClientResponseRef = nil
   try:
     response = await request.send()
@@ -82,17 +82,17 @@ proc qqGatewayLoop(c: QQChannel) {.async.} =
         let interval = msg["d"]["heartbeat_interval"].getInt()
         discard (proc() {.async.} =
           while c.running:
-            await sleepAsync(interval)
-            if c.ws != nil: await c.ws.send($ %*{"op": 1, "d": nil})
+            await sleepAsync(milliseconds(interval))
+            if c.ws != nil: await c.ws.send( $ %*{"op": 1, "d": nil})
         )()
         # Identify
-        await c.ws.send($ %*{
+        await c.ws.send( $ %*{
           "op": 2,
           "d": {
             "token": "QQBot " & c.token,
             "intents": 1 shl 30, # Intent for C2C and Group messages
-            "properties": {"os": "linux", "browser": "nimclaw", "device": "nimclaw"}
-          }
+          "properties": {"os": "linux", "browser": "nimclaw", "device": "nimclaw"}
+        }
         })
 
       elif op == 0: # Dispatch
@@ -117,7 +117,7 @@ proc qqGatewayLoop(c: QQChannel) {.async.} =
 
     except CatchableError as e:
       error "Gateway error", topic = "qq", error = e.msg
-      await sleepAsync(5000)
+      await sleepAsync(chronos.seconds(5))
 
 method name*(c: QQChannel): string = "qq"
 
@@ -129,21 +129,21 @@ method start*(c: QQChannel) {.async.} =
   var headers: seq[HttpHeaderTuple] = @[
     (key: "Authorization", value: "QQBot " & c.token)
   ]
-  
+
   let url = "https://api.sgroup.qq.com/gateway/bot"
   let addressRes = c.session.getAddress(url)
   if addressRes.isErr:
     error "Failed to resolve gateway URL", topic = "qq"
     return
   let address = addressRes.get()
-  
+
   let request = HttpClientRequestRef.new(
     c.session,
     address,
     meth = MethodGet,
     headers = headers
   )
-  
+
   var response: HttpClientResponseRef = nil
   try:
     response = await request.send()
@@ -161,7 +161,7 @@ method start*(c: QQChannel) {.async.} =
         let parts = wsHost.split("/", 1)
         wsHost = parts[0]
         wsPath = "/" & parts[1]
-      
+
       c.ws = await WebSocket.connect(wsHost, wsPath, secure = wsUrl.startsWith("wss"))
       c.running = true
       discard qqGatewayLoop(c)
@@ -173,7 +173,7 @@ method start*(c: QQChannel) {.async.} =
 
 method stop*(c: QQChannel) {.async.} =
   c.running = false
-  if c.ws != nil: 
+  if c.ws != nil:
     try:
       await c.ws.close()
     except: discard
@@ -184,20 +184,20 @@ method stop*(c: QQChannel) {.async.} =
 
 method send*(c: QQChannel, msg: OutboundMessage) {.async.} =
   if not c.running: return
-  
+
   var headers: seq[HttpHeaderTuple] = @[
     (key: "Authorization", value: "QQBot " & c.token),
     (key: "Content-Type", value: "application/json")
   ]
-  
+
   let url = "https://api.sgroup.qq.com/v2/users/$1/messages".format(msg.chat_id)
   let payload = %*{"content": msg.content, "msg_type": 0}
-  
+
   let addressRes = c.session.getAddress(url)
   if addressRes.isErr:
     return
   let address = addressRes.get()
-  
+
   let bodyStr = $payload
   let request = HttpClientRequestRef.new(
     c.session,
@@ -206,7 +206,7 @@ method send*(c: QQChannel, msg: OutboundMessage) {.async.} =
     headers = headers,
     body = bodyStr.toOpenArrayByte(0, bodyStr.len - 1)
   )
-  
+
   var resp: HttpClientResponseRef = nil
   try:
     resp = await request.send()
