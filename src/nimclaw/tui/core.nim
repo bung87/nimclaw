@@ -140,7 +140,8 @@ proc renderChat(app: TuiApp) =
   let h = app.chatHeight()
   let startY = HeaderHeight + 1
 
-  # Clear chat area
+  # Clear chat area (reset attributes first to prevent color bleeding)
+  app.tb.resetAttributes()
   for y in startY..<(startY + h):
     for x in 0..<w:
       app.tb.write(x, y, " ")
@@ -188,6 +189,8 @@ proc renderInput(app: TuiApp) =
   let w = terminalWidth()
   let h = terminalHeight()
   let inputY = h - 2
+
+  app.tb.resetAttributes()
 
   # Separator line
   for x in 0..<w:
