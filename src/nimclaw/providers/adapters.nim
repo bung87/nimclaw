@@ -1,9 +1,7 @@
 import std/[tables, json, options, strutils, times]
 import types
 
-# ==============================================================================
 # Helper Functions
-# ==============================================================================
 
 proc safeParseJson*(s: string): JsonNode {.raises: [].} =
   ## Safely parse JSON, return empty object on error
@@ -66,9 +64,7 @@ proc tryParseToolCallFromContent*(content: string): seq[ToolCall] {.raises: [].}
 
 
 
-# ==============================================================================
 # OpenAI Adapter (also works for OpenRouter, Groq, vLLM, etc.)
-# ==============================================================================
 
 type
   OpenAIAdapter* = ref object of ProviderAdapter
@@ -141,9 +137,7 @@ method normalizeResponse*(a: OpenAIAdapter, json: JsonNode): LLMResponse {.gcsaf
 
   return resp
 
-# ==============================================================================
 # Ollama Adapter
-# ==============================================================================
 
 type
   OllamaAdapter* = ref object of ProviderAdapter
@@ -230,9 +224,7 @@ method normalizeResponse*(a: OllamaAdapter, json: JsonNode): LLMResponse {.gcsaf
 
   return resp
 
-# ==============================================================================
 # Anthropic Adapter
-# ==============================================================================
 
 type
   AnthropicAdapter* = ref object of ProviderAdapter
@@ -296,9 +288,7 @@ method normalizeResponse*(a: AnthropicAdapter, json: JsonNode): LLMResponse {.gc
 
   return resp
 
-# ==============================================================================
 # Google Gemini Adapter
-# ==============================================================================
 
 type
   GeminiAdapter* = ref object of ProviderAdapter
@@ -360,9 +350,7 @@ method normalizeResponse*(a: GeminiAdapter, json: JsonNode): LLMResponse {.gcsaf
 
   return resp
 
-# ==============================================================================
 # Adapter Factory
-# ==============================================================================
 
 proc getAdapter*(provider: string): ProviderAdapter {.raises: [].} =
   ## Get the appropriate adapter for a provider

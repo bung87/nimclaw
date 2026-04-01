@@ -1,7 +1,7 @@
 import chronos
 import std/[os, strutils, tables, options]
 import cligen
-import nimclaw/[config, logger, bus, agent/loop, clients/http]
+import nimclaw/[config, logger, bus, agent/loop, providers/factory]
 import nimclaw/channels/[manager as channel_manager, base as channel_base]
 import nimclaw/services/[heartbeat, cron as cron_service, voice]
 import nimclaw/skills/[loader as skills_loader, installer as skills_installer]

@@ -57,9 +57,7 @@ type
 
   LLMProvider* = ref object of RootObj
 
-# ==============================================================================
 # Message Role Helpers
-# ==============================================================================
 
 proc toString*(role: MessageRole): string =
   case role:
@@ -76,9 +74,7 @@ proc parseMessageRole*(s: string): MessageRole =
   of "tool": mrTool
   else: mrUser # default fallback
 
-# ==============================================================================
 # Core Message Serialization (OpenAI format)
-# ==============================================================================
 
 proc toOpenAIMessage*(msg: Message): JsonNode =
   ## Convert internal Message to OpenAI API format
@@ -162,9 +158,7 @@ proc fromOpenAIMessage*(j: JsonNode): Message =
   if j.hasKey("tool_call_id"):
     result.toolCallId = some(j["tool_call_id"].getStr(""))
 
-# ==============================================================================
 # Legacy Compatibility Helpers
-# ==============================================================================
 
 proc toLegacyRole*(role: MessageRole): string =
   ## For backward compatibility with string-based roles
@@ -174,9 +168,7 @@ proc fromLegacyRole*(role: string): MessageRole =
   ## For backward compatibility with string-based roles
   parseMessageRole(role)
 
-# ==============================================================================
 # Adapter Methods (Base)
-# ==============================================================================
 
 method normalizeResponse*(a: ProviderAdapter, json: JsonNode): LLMResponse {.base, gcsafe, raises: [].} =
   ## Base method - should be overridden by specific adapters
@@ -186,9 +178,7 @@ method normalizeMessage*(a: ProviderAdapter, msg: Message): JsonNode {.base.} =
   ## Default normalization: use OpenAI format
   msg.toOpenAIMessage()
 
-# ==============================================================================
 # Provider Base Methods
-# ==============================================================================
 
 method chat*(p: LLMProvider, messages: seq[Message], tools: seq[ToolDefinition],
              model: string, options: Table[string, JsonNode]): Future[LLMResponse] {.base, async.} =
