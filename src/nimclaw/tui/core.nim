@@ -150,18 +150,21 @@ proc handleInput(app: TuiApp, key: Key) =
 proc renderHeader(app: TuiApp) =
   let w = terminalWidth()
 
-  # Draw header background
+  # Draw header background first
   for x in 0..<w:
     app.tb.write(x, 0, " ", bgBlue)
 
-  # Title
-  app.tb.write(2, 0, "🦞 PicoClaw", bgBlue)
+  # Reset attributes before writing text (emoji doesn't need bgBlue, bg already set)
+  app.tb.resetAttributes()
+
+  # Title - write without bgBlue since background is already blue
+  app.tb.write(2, 0, "🦞 PicoClaw")
 
   # Status info (right aligned)
   let statusText = "Interactive Mode  |  Ctrl+C: Quit"
   let statusX = w - statusText.len - 2
   if statusX > 20:
-    app.tb.write(statusX, 0, statusText, bgBlue)
+    app.tb.write(statusX, 0, statusText)
 
   # Reset attributes before separator
   app.tb.resetAttributes()
