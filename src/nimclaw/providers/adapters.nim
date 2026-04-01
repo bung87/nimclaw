@@ -1,4 +1,5 @@
 import std/[tables, json, options, strutils, times]
+import chronicles
 import types
 
 # Helper Functions
@@ -7,7 +8,8 @@ proc safeParseJson*(s: string): JsonNode {.raises: [].} =
   ## Safely parse JSON, return empty object on error
   try:
     return parseJson(s)
-  except CatchableError:
+  except CatchableError as e:
+    warn "Failed to parse JSON", msg = e.msg
     return newJObject()
 
 proc normalizeArguments*(argsNode: JsonNode): Table[string, JsonNode] {.raises: [].} =
@@ -24,8 +26,8 @@ proc normalizeArguments*(argsNode: JsonNode): Table[string, JsonNode] {.raises: 
         result[k] = v
     else:
       discard
-  except CatchableError:
-    discard
+  except CatchableError as e:
+    warn "Failed to normalize arguments", msg = e.msg
   return result
 
 proc tryParseToolCallFromContent*(content: string): seq[ToolCall] {.raises: [].} =
@@ -131,9 +133,8 @@ method normalizeResponse*(a: OpenAIAdapter, json: JsonNode): LLMResponse {.gcsaf
         completion_tokens: usage.getOrDefault("completion_tokens").getInt(),
         total_tokens: usage.getOrDefault("total_tokens").getInt()
       )
-  except CatchableError:
-    # If anything goes wrong, return empty response
-    discard
+  except CatchableError as e:
+    warn "Adapter failed to normalize response", msg = e.msg
 
   return resp
 
@@ -218,9 +219,8 @@ method normalizeResponse*(a: OllamaAdapter, json: JsonNode): LLMResponse {.gcsaf
           resp.tool_calls.add(c)
 
     resp.finish_reason = "stop"
-  except CatchableError:
-    # If anything goes wrong, return empty response
-    discard
+  except CatchableError as e:
+    warn "Adapter failed to normalize response", msg = e.msg
 
   return resp
 
@@ -282,9 +282,8 @@ method normalizeResponse*(a: AnthropicAdapter, json: JsonNode): LLMResponse {.gc
         total_tokens: usage.getOrDefault("input_tokens").getInt() +
                      usage.getOrDefault("output_tokens").getInt()
       )
-  except CatchableError:
-    # If anything goes wrong, return empty response
-    discard
+  except CatchableError as e:
+    warn "Adapter failed to normalize response", msg = e.msg
 
   return resp
 
@@ -344,9 +343,8 @@ method normalizeResponse*(a: GeminiAdapter, json: JsonNode): LLMResponse {.gcsaf
         completion_tokens: usage.getOrDefault("candidatesTokenCount").getInt(),
         total_tokens: usage.getOrDefault("totalTokenCount").getInt()
       )
-  except CatchableError:
-    # If anything goes wrong, return empty response
-    discard
+  except CatchableError as e:
+    warn "Adapter failed to normalize response", msg = e.msg
 
   return resp
 
@@ -367,5 +365,6 @@ proc getAdapter*(provider: string): ProviderAdapter {.raises: [].} =
     else:
       # Default to OpenAI adapter for unknown providers
       OpenAIAdapter()
-  except CatchableError:
+  except CatchableError as e:
+    warn "Failed to create adapter, using default", msg = e.msg
     OpenAIAdapter()

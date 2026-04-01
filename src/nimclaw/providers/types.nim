@@ -1,5 +1,6 @@
 import std/[options, tables, json]
 import chronos
+import chronicles
 
 type
   # ============================================================================
@@ -145,8 +146,8 @@ proc fromOpenAIMessage*(j: JsonNode): Message =
             if parsed.kind == JObject:
               for k, v in parsed:
                 toolCall.arguments[k] = v
-          except CatchableError:
-            discard
+          except CatchableError as e:
+            warn "Failed to parse tool arguments", msg = e.msg
         of JObject:
           for k, v in argsNode:
             toolCall.arguments[k] = v
