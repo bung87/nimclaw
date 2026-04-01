@@ -145,7 +145,7 @@ proc fromOpenAIMessage*(j: JsonNode): Message =
             if parsed.kind == JObject:
               for k, v in parsed:
                 toolCall.arguments[k] = v
-          except:
+          except CatchableError:
             discard
         of JObject:
           for k, v in argsNode:
