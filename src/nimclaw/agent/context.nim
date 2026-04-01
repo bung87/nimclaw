@@ -1,4 +1,4 @@
-import std/[os, times, strutils, sequtils, tables, json]
+import std/[os, times, strutils, sequtils, tables, json, options]
 import ../providers/types as providers_types
 import ../skills/loader as skills_loader
 import ../tools/registry as tools_registry
@@ -68,9 +68,18 @@ $4
 
 1. **ALWAYS use tools** - When you need to perform an action (schedule reminders, send messages, execute commands, etc.), you MUST call the appropriate tool. Do NOT just say you'll do it or pretend to do it.
 
-2. **Be helpful and accurate** - When using tools, briefly explain what you're doing.
+2. **CRITICAL: Tool Calling Format** - When calling a tool, you MUST populate the `tool_calls` field, NOT the `content` field. The response must include:
+   - `tool_calls`: array of tool calls
+   - Each tool call has: `type: "function"`, `function.name`, and `function.arguments` (as JSON string)
+   
+   WRONG: content = "{\"name\": \"list_dir\", ...}"
+   CORRECT: tool_calls = [{"type": "function", "function": {"name": "list_dir", "arguments": "{\"path\": \"/workspace\"}"}}]
+   
+   The content field should be null or empty when making tool calls.
 
-3. **Memory** - When remembering something, write to $3/memory/MEMORY.md""".format(now, runtime, workspacePath, toolsSection)
+3. **Be helpful and accurate** - When using tools, briefly explain what you're doing.
+
+4. **Memory** - When remembering something, write to $3/memory/MEMORY.md""".format(now, runtime, workspacePath, toolsSection)
 
 proc loadBootstrapFiles(cb: ContextBuilder): string =
   let bootstrapFiles = ["AGENTS.md", "SOUL.md", "USER.md", "IDENTITY.md"]
@@ -103,7 +112,8 @@ $1""".format(skillsSummary))
 
   return parts.join("\n\n---\n\n")
 
-proc buildMessages*(cb: ContextBuilder, history: seq[providers_types.Message], summary: string, currentMessage: string, channel, chatID: string): seq[providers_types.Message] =
+proc buildMessages*(cb: ContextBuilder, history: seq[providers_types.Message], summary: string, currentMessage: string,
+    channel, chatID: string): seq[providers_types.Message] =
   var systemPrompt = cb.buildSystemPrompt()
   if channel != "" and chatID != "":
     systemPrompt.add("\n\n## Current Session\nChannel: $1\nChat ID: $2".format(channel, chatID))
@@ -112,9 +122,9 @@ proc buildMessages*(cb: ContextBuilder, history: seq[providers_types.Message], s
     systemPrompt.add("\n\n## Summary of Previous Conversation\n\n" & summary)
 
   var messages: seq[providers_types.Message] = @[]
-  messages.add(providers_types.Message(role: "system", content: systemPrompt))
+  messages.add(providers_types.Message(role: mrSystem, content: some(systemPrompt)))
   messages.add(history)
-  messages.add(providers_types.Message(role: "user", content: currentMessage))
+  messages.add(providers_types.Message(role: mrUser, content: some(currentMessage)))
   return messages
 
 proc getSkillsInfo*(cb: ContextBuilder): Table[string, JsonNode] =

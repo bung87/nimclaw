@@ -1,5 +1,5 @@
 import chronos
-import std/[tables, locks, times, json, strutils]
+import std/[tables, locks, times, json, strutils, options]
 import ../providers/types as providers_types
 import ../bus
 import ../bus_types
@@ -39,15 +39,21 @@ proc runTask*(sm: SubagentManager, task: SubagentTask) {.async.} =
   task.created = getTime().toUnix * 1000
 
   let messages = @[
-    providers_types.Message(role: "system", content: "You are a subagent. Complete the given task independently and report the result."),
-    providers_types.Message(role: "user", content: task.task)
+    providers_types.Message(
+      role: providers_types.mrSystem,
+      content: some("You are a subagent. Complete the given task independently and report the result.")
+    ),
+    providers_types.Message(
+      role: providers_types.mrUser,
+      content: some(task.task)
+    )
   ]
 
   try:
     let response = await sm.provider.chat(messages, @[], sm.provider.getDefaultModel(), initTable[string, JsonNode]())
     acquire(sm.lock)
     task.status = "completed"
-    task.result = response.content
+    task.result = if response.content.isSome: response.content.get() else: ""
     release(sm.lock)
   except CatchableError as e:
     acquire(sm.lock)

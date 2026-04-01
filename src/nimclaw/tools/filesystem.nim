@@ -91,10 +91,11 @@ method execute*(t: ListDirTool, args: Table[string, JsonNode]): Future[string] {
     let safePath = validatePath(path)
     var output = ""
     for kind, entry in walkDir(safePath):
+      let fullPath = safePath / entry
       if kind == pcDir or kind == pcLinkToDir:
-        output.add("DIR:  " & lastPathPart(entry) & "\n")
+        output.add("DIR:  " & fullPath & "\n")
       else:
-        output.add("FILE: " & lastPathPart(entry) & "\n")
+        output.add("FILE: " & fullPath & "\n")
     return output
   except ValidationError as e:
     return "Error: " & e.msg

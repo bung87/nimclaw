@@ -1,5 +1,5 @@
 import chronos
-import std/[os, json, strutils, tables, locks]
+import std/[os, json, strutils, tables, locks, options]
 import ../bus, ../bus_types, ../config, ../logger, ../providers/types as providers_types, ../session, ../utils
 import context as agent_context
 import ../tools/registry as tools_registry
@@ -87,7 +87,8 @@ proc registerTool*(al: AgentLoop, tool: Tool) =
 proc estimateTokens(messages: seq[providers_types.Message]): int =
   var total = 0
   for m in messages:
-    total += m.content.len div 4
+    let contentLen = if m.content.isSome: m.content.get().len else: 0
+    total += contentLen div 4
   return total
 
 proc summarizeBatch(al: AgentLoop, batch: seq[providers_types.Message], existingSummary: string): Future[
@@ -97,11 +98,17 @@ proc summarizeBatch(al: AgentLoop, batch: seq[providers_types.Message], existing
     prompt.add("Existing context: " & existingSummary & "\n")
   prompt.add("\nCONVERSATION:\n")
   for m in batch:
-    prompt.add(m.role & ": " & m.content & "\n")
+    let roleStr = m.role.toString()
+    let content = if m.content.isSome: m.content.get() else: ""
+    prompt.add(roleStr & ": " & content & "\n")
 
-  let response = await al.provider.chat(@[providers_types.Message(role: "user", content: prompt)], @[], al.model,
-      initTable[string, JsonNode]())
-  return response.content
+  let response = await al.provider.chat(
+    @[providers_types.Message(role: mrUser, content: some(prompt))],
+    @[],
+    al.model,
+    initTable[string, JsonNode]()
+  )
+  return if response.content.isSome: response.content.get() else: ""
 
 proc summarizeSession(al: AgentLoop, sessionKey: string) {.async.} =
   let history = al.sessions.getHistory(sessionKey)
@@ -114,8 +121,9 @@ proc summarizeSession(al: AgentLoop, sessionKey: string) {.async.} =
   let maxMessageTokens = al.contextWindow div 2
   var validMessages: seq[providers_types.Message] = @[]
   for m in toSummarize:
-    if m.role == "user" or m.role == "assistant":
-      if (m.content.len div 4) < maxMessageTokens:
+    if m.role == mrUser or m.role == mrAssistant:
+      let contentLen = if m.content.isSome: m.content.get().len else: 0
+      if (contentLen div 4) < maxMessageTokens:
         validMessages.add(m)
 
   if validMessages.len == 0: return
@@ -159,20 +167,19 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
     iteration += 1
     debug "LLM iteration", topic = "agent", iteration = $iteration, max = $al.maxIterations
 
-    var toolDefs: seq[ToolDefinition] = @[]
-    try:
-      toolDefs = al.tools.getDefinitions()
-    except CatchableError as e:
-      error "Failed to get tool definitions", topic = "agent", error = e.msg
-    let response = await al.provider.chat(currentMessages, toolDefs, al.model, initTable[string, JsonNode]())
+    let response = await al.provider.chat(currentMessages, al.tools.getDefinitions(), al.model, initTable[string,
+        JsonNode]())
 
     if response.tool_calls.len == 0:
-      finalContent = response.content
+      finalContent = if response.content.isSome: response.content.get() else: ""
       info "LLM response without tool calls", topic = "agent", iteration = $iteration
       break
 
-    var assistantMsg = providers_types.Message(role: "assistant", content: response.content,
-        tool_calls: response.tool_calls)
+    var assistantMsg = providers_types.Message(
+      role: mrAssistant,
+      content: response.content,
+      toolCalls: response.tool_calls
+    )
     currentMessages.add(assistantMsg)
     al.sessions.addFullMessage(opts.sessionKey, assistantMsg)
 
@@ -185,7 +192,12 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
       let toolResult = await al.tools.executeWithContext(tc.name, tc.arguments, opts.channel, opts.chatID)
       if toolResult.startsWith("Error: "):
         allToolErrors.add(tc.name & ": " & toolResult)
-      let toolResultMsg = providers_types.Message(role: "tool", content: toolResult, tool_call_id: tc.id)
+      let toolResultMsg = providers_types.Message(
+        role: mrTool,
+        content: some(toolResult),
+        toolCallId: some(tc.id),
+        name: some(tc.name)
+      )
       currentMessages.add(toolResultMsg)
       al.sessions.addFullMessage(opts.sessionKey, toolResultMsg)
 
