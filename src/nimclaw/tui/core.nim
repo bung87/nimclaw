@@ -1,4 +1,4 @@
-import std/[strutils, tables, json, terminal]
+import std/[strutils]
 import illwill
 import chronos
 import ../providers/types as providers_types
@@ -16,13 +16,17 @@ type
     agentLoop*: AgentLoop
     messages*: seq[ChatMessage]
     inputBuffer*: string
-    cursorX*: int
+    visualInput*: string # What portion of input is visible
+    cursorX*: int        # Logical cursor position in inputBuffer
+    visualCursorX*: int  # Cursor position in visualInput
     needsRedraw*: bool
     isGenerating*: bool
 
 const
   HeaderHeight = 2
   InputHeight = 3
+  InputStartX = 6     # After "🦞 " prompt
+  InputMaxWidth* = 50 # Max visible input width
 
 proc newTuiApp*(agentLoop: AgentLoop): TuiApp =
   illwillInit(fullscreen = true)
@@ -34,13 +38,37 @@ proc newTuiApp*(agentLoop: AgentLoop): TuiApp =
     agentLoop: agentLoop,
     messages: @[],
     inputBuffer: "",
+    visualInput: "",
     cursorX: 0,
+    visualCursorX: 0,
     needsRedraw: true,
     isGenerating: false
   )
 
 proc chatHeight(app: TuiApp): int =
   terminalHeight() - HeaderHeight - InputHeight - 1
+
+# Calculate what portion of input to show (left-to-right)
+proc updateVisualInput(app: TuiApp) =
+  let w = terminalWidth()
+  let maxWidth = w - InputStartX - 2 # Leave some margin
+
+  if app.inputBuffer.len <= maxWidth:
+    # Fits entirely
+    app.visualInput = app.inputBuffer
+    app.visualCursorX = app.cursorX
+  else:
+    # Need to scroll
+    var startPos = 0
+    var endPos = maxWidth
+
+    if app.cursorX > maxWidth div 2:
+      # Cursor is past halfway, scroll to center it
+      startPos = min(app.cursorX - maxWidth div 2, app.inputBuffer.len - maxWidth)
+      endPos = startPos + maxWidth
+
+    app.visualInput = app.inputBuffer.substr(startPos, endPos - 1)
+    app.visualCursorX = app.cursorX - startPos
 
 proc addMessage(app: TuiApp, role, content: string, toolCalls: seq[providers_types.ToolCall] = @[]) =
   app.messages.add(ChatMessage(role: role, content: content, toolCalls: toolCalls))
@@ -53,10 +81,10 @@ proc sendMessage(app: TuiApp) {.async.} =
   app.addMessage("user", userInput)
   app.inputBuffer = ""
   app.cursorX = 0
+  app.updateVisualInput()
   app.isGenerating = true
   app.needsRedraw = true
 
-  # Process through agent loop
   let response = await app.agentLoop.processDirect(userInput, "tui:default")
 
   app.addMessage("assistant", response)
@@ -78,38 +106,45 @@ proc handleInput(app: TuiApp, key: Key) =
     if app.cursorX > 0 and app.inputBuffer.len > 0:
       app.inputBuffer.delete(app.cursorX - 1 .. app.cursorX - 1)
       app.cursorX.dec
+      app.updateVisualInput()
       app.needsRedraw = true
 
   of Key.Delete:
     if app.cursorX < app.inputBuffer.len:
       app.inputBuffer.delete(app.cursorX .. app.cursorX)
+      app.updateVisualInput()
       app.needsRedraw = true
 
   of Key.Left:
     if app.cursorX > 0:
       app.cursorX.dec
+      app.updateVisualInput()
       app.needsRedraw = true
 
   of Key.Right:
     if app.cursorX < app.inputBuffer.len:
       app.cursorX.inc
+      app.updateVisualInput()
       app.needsRedraw = true
 
   of Key.Home:
     app.cursorX = 0
+    app.updateVisualInput()
     app.needsRedraw = true
 
   of Key.End:
     app.cursorX = app.inputBuffer.len
+    app.updateVisualInput()
     app.needsRedraw = true
 
   else:
-    # Handle printable ASCII keys (Space through ~)
+    # Handle printable characters
     let keyOrd = ord(key)
     if keyOrd >= 32 and keyOrd <= 126:
       let c = chr(keyOrd)
       app.inputBuffer.insert($c, app.cursorX)
       app.cursorX.inc
+      app.updateVisualInput()
       app.needsRedraw = true
 
 proc renderHeader(app: TuiApp) =
@@ -165,9 +200,9 @@ proc renderChat(app: TuiApp) =
       if lineIdx == 0:
         case msg.role:
         of "user":
-          app.tb.write(2, currentY, "You:", fgCyan, {styleBright})
+          app.tb.write(2, currentY, "You:", fgCyan)
         of "assistant":
-          app.tb.write(2, currentY, "🦞:", fgGreen, {styleBright})
+          app.tb.write(2, currentY, "🦞:", fgGreen)
         of "system":
           app.tb.write(2, currentY, "⚙:", fgYellow)
         else:
@@ -200,17 +235,21 @@ proc renderInput(app: TuiApp) =
     app.tb.write(x, h - 3, "─")
 
   # Input prompt
-  app.tb.write(2, inputY, "🦞", fgCyan, {styleBright})
+  app.tb.write(2, inputY, "🦞", fgCyan)
   app.tb.resetAttributes()
-  app.tb.write(6, inputY, app.inputBuffer)
 
-  # Show cursor position (inverse video)
+  # Visible input text
+  app.tb.write(InputStartX, inputY, app.visualInput)
+
+  # Show cursor (blinking underscore style like tui_widget)
+  let cursorScreenX = InputStartX + app.visualCursorX
   if app.cursorX < app.inputBuffer.len:
-    app.tb.write(6 + app.cursorX, inputY, $app.inputBuffer[app.cursorX], bgWhite, fgBlack)
+    # Cursor on a character - show character with inverse/blink
+    app.tb.write(cursorScreenX, inputY, $app.visualInput[app.visualCursorX], styleUnderscore)
   else:
-    app.tb.write(6 + app.cursorX, inputY, " ", bgWhite, fgBlack)
+    # Cursor at end - show underscore
+    app.tb.write(cursorScreenX, inputY, "_", styleUnderscore)
 
-  # Reset attributes before drawing other elements
   app.tb.resetAttributes()
 
   # Generating indicator
@@ -229,6 +268,7 @@ proc render*(app: TuiApp) =
   app.needsRedraw = false
 
 proc run*(app: TuiApp) {.async.} =
+  app.updateVisualInput()
   app.render()
 
   while app.running:
