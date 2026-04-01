@@ -1,7 +1,7 @@
 import chronos
 import std/[os, strutils, tables, options]
 import cligen
-import nimclaw/[config, logger, bus, agent/loop, providers/http]
+import nimclaw/[config, logger, bus, agent/loop, providers/http_provider]
 import nimclaw/channels/[manager as channel_manager, base as channel_base]
 import nimclaw/services/[heartbeat, cron as cron_service, voice]
 import nimclaw/skills/[loader as skills_loader, installer as skills_installer]
@@ -103,10 +103,10 @@ proc skills(list = false, install = "", remove = "", show = "", create = "",
   let workspace = cfg.workspacePath()
   let installer = newSkillInstaller(workspace)
   let loader = newSkillsLoader(workspace, "", "")
-  
+
   # Set verbose mode
   installer.verbose = verbose
-  
+
   if list:
     let installed = installer.listInstalledSkills()
     if installed.len == 0:
