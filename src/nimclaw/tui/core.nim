@@ -173,6 +173,9 @@ proc renderChat(app: TuiApp) =
         else:
           app.tb.write(2, currentY, "•")
 
+        # Reset attributes before content
+        app.tb.resetAttributes()
+
         # Content (truncated to fit)
         let maxWidth = w - 10
         let displayText = if line.len > maxWidth: line[0..<maxWidth] & "..." else: line
@@ -198,13 +201,17 @@ proc renderInput(app: TuiApp) =
 
   # Input prompt
   app.tb.write(2, inputY, "🦞", fgCyan, {styleBright})
+  app.tb.resetAttributes()
   app.tb.write(6, inputY, app.inputBuffer)
 
-  # Show cursor position
+  # Show cursor position (inverse video)
   if app.cursorX < app.inputBuffer.len:
     app.tb.write(6 + app.cursorX, inputY, $app.inputBuffer[app.cursorX], bgWhite, fgBlack)
   else:
     app.tb.write(6 + app.cursorX, inputY, " ", bgWhite, fgBlack)
+
+  # Reset attributes before drawing other elements
+  app.tb.resetAttributes()
 
   # Generating indicator
   if app.isGenerating:
