@@ -117,16 +117,16 @@ proc renderHeader(app: TuiApp) =
 
   # Draw header background
   for x in 0..<w:
-    app.tb.write(x, 0, " ", bgBlue, fgWhite)
+    app.tb.write(x, 0, " ", bgBlue)
 
   # Title
-  app.tb.write(2, 0, "🦞 PicoClaw", bgBlue, fgWhite)
+  app.tb.write(2, 0, "🦞 PicoClaw", bgBlue)
 
   # Status info (right aligned)
   let statusText = "Interactive Mode  |  Ctrl+C: Quit"
   let statusX = w - statusText.len - 2
   if statusX > 20:
-    app.tb.write(statusX, 0, statusText, bgBlue, fgWhite)
+    app.tb.write(statusX, 0, statusText, bgBlue)
 
   # Reset attributes before separator
   app.tb.resetAttributes()
