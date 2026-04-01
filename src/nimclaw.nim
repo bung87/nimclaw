@@ -1,7 +1,7 @@
 import chronos
 import std/[os, strutils, tables, options]
 import cligen
-import nimclaw/[config, logger, bus, agent/loop, providers/factory]
+import nimclaw/[config, logger, bus, agent/loop, providers/factory, tui/core as tui_core]
 import nimclaw/channels/[manager as channel_manager, base as channel_base]
 import nimclaw/services/[heartbeat, cron as cron_service, voice]
 import nimclaw/skills/[loader as skills_loader, installer as skills_installer]
@@ -45,14 +45,14 @@ proc agent(message = "", session = "cli:default") =
   initLogger()
   let cfg = loadConfig(getConfigPath())
   let agentLoop = newAgentLoop(cfg, newMessageBus(), createProvider(cfg))
-  if message != "": echo logo, " ", waitFor agentLoop.processDirect(message, session)
+  if message != "":
+    # One-shot mode
+    echo logo, " ", waitFor agentLoop.processDirect(message, session)
   else:
-    echo logo, " Interactive mode\n"
-    while true:
-      stdout.write logo & " You: "; let input = stdin.readLine().strip()
-      if input in ["exit", "quit"]: break
-      if input == "": continue
-      echo "\n", logo, " ", waitFor agentLoop.processDirect(input, session), "\n"
+    # TUI mode (default)
+    setControlCHook(tui_core.cleanup)
+    let app = newTuiApp(agentLoop)
+    waitFor app.run()
 
 proc gateway() =
   initLogger()
