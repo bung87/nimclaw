@@ -1,8 +1,8 @@
 import std/[json, strutils, tables]
 import chronos
 import chronos/apps/http/httpclient
-import types
-import adapters
+import ../providers/types
+import ../providers/adapters
 import ../config as claw_config
 import ../logger
 
