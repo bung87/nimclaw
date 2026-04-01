@@ -1,34 +1,40 @@
-import std/[strutils]
+import std/[strutils, terminal]
 import illwill
 import chronos
 import ../providers/types as providers_types
 import ../agent/loop
+import ../config
 
 type
   ChatMessage* = object
     role*: string
     content*: string
     toolCalls*: seq[providers_types.ToolCall]
+    expanded*: bool # For tool call visualization
 
   TuiApp* = ref object
     tb*: TerminalBuffer
     running*: bool
     agentLoop*: AgentLoop
+    cfg*: Config
     messages*: seq[ChatMessage]
     inputBuffer*: string
-    visualInput*: string # What portion of input is visible
-    cursorX*: int        # Logical cursor position in inputBuffer
-    visualCursorX*: int  # Cursor position in visualInput
+    visualInput*: string
+    cursorX*: int
+    visualCursorX*: int
+    scrollOffset*: int
     needsRedraw*: bool
     isGenerating*: bool
+    showHelp*: bool
+    helpScroll*: int
 
 const
   HeaderHeight = 2
   InputHeight = 3
-  InputStartX = 6     # After "🦞 " prompt
-  InputMaxWidth* = 50 # Max visible input width
+  InputStartX = 6
+  HelpWidth = 30
 
-proc newTuiApp*(agentLoop: AgentLoop): TuiApp =
+proc newTuiApp*(agentLoop: AgentLoop, cfg: Config): TuiApp =
   illwillInit(fullscreen = true)
   hideCursor()
 
@@ -36,42 +42,71 @@ proc newTuiApp*(agentLoop: AgentLoop): TuiApp =
     tb: newTerminalBuffer(terminalWidth(), terminalHeight()),
     running: true,
     agentLoop: agentLoop,
+    cfg: cfg,
     messages: @[],
     inputBuffer: "",
     visualInput: "",
     cursorX: 0,
     visualCursorX: 0,
+    scrollOffset: 0,
     needsRedraw: true,
-    isGenerating: false
+    isGenerating: false,
+    showHelp: false,
+    helpScroll: 0
   )
 
 proc chatHeight(app: TuiApp): int =
   terminalHeight() - HeaderHeight - InputHeight - 1
 
-# Calculate what portion of input to show (left-to-right)
-proc updateVisualInput(app: TuiApp) =
+proc chatWidth(app: TuiApp): int =
   let w = terminalWidth()
-  let maxWidth = w - InputStartX - 2 # Leave some margin
+  if app.showHelp:
+    w - HelpWidth - 1
+  else:
+    w
+
+# Calculate visible portion of input
+proc updateVisualInput(app: TuiApp) =
+  let maxWidth = terminalWidth() - InputStartX - 4
 
   if app.inputBuffer.len <= maxWidth:
-    # Fits entirely
     app.visualInput = app.inputBuffer
     app.visualCursorX = app.cursorX
   else:
-    # Need to scroll
     var startPos = 0
-    var endPos = maxWidth
-
     if app.cursorX > maxWidth div 2:
-      # Cursor is past halfway, scroll to center it
       startPos = min(app.cursorX - maxWidth div 2, app.inputBuffer.len - maxWidth)
-      endPos = startPos + maxWidth
-
-    app.visualInput = app.inputBuffer.substr(startPos, endPos - 1)
+    app.visualInput = app.inputBuffer.substr(startPos, startPos + maxWidth - 1)
     app.visualCursorX = app.cursorX - startPos
 
+proc wrapText(text: string, maxWidth: int): seq[string] =
+  ## Simple word wrap
+  result = @[]
+  var currentLine = ""
+
+  for word in text.split(' '):
+    if currentLine.len == 0:
+      currentLine = word
+    elif currentLine.len + 1 + word.len <= maxWidth:
+      currentLine.add(" " & word)
+    else:
+      result.add(currentLine)
+      currentLine = word
+
+  if currentLine.len > 0:
+    result.add(currentLine)
+
+  # Handle empty result
+  if result.len == 0:
+    result.add("")
+
 proc addMessage(app: TuiApp, role, content: string, toolCalls: seq[providers_types.ToolCall] = @[]) =
-  app.messages.add(ChatMessage(role: role, content: content, toolCalls: toolCalls))
+  app.messages.add(ChatMessage(
+    role: role,
+    content: content,
+    toolCalls: toolCalls,
+    expanded: false
+  ))
   app.needsRedraw = true
 
 proc sendMessage(app: TuiApp) {.async.} =
@@ -95,7 +130,14 @@ proc handleInput(app: TuiApp, key: Key) =
   case key
   of Key.None: discard
 
-  of Key.Escape, Key.CtrlC:
+  of Key.Escape:
+    if app.showHelp:
+      app.showHelp = false
+      app.needsRedraw = true
+    else:
+      app.running = false
+
+  of Key.CtrlC:
     app.running = false
 
   of Key.Enter:
@@ -103,7 +145,7 @@ proc handleInput(app: TuiApp, key: Key) =
       discard app.sendMessage()
 
   of Key.Backspace:
-    if app.cursorX > 0 and app.inputBuffer.len > 0:
+    if app.cursorX > 0:
       app.inputBuffer.delete(app.cursorX - 1 .. app.cursorX - 1)
       app.cursorX.dec
       app.updateVisualInput()
@@ -137,6 +179,56 @@ proc handleInput(app: TuiApp, key: Key) =
     app.updateVisualInput()
     app.needsRedraw = true
 
+  of Key.Up:
+    if app.showHelp:
+      if app.helpScroll > 0:
+        app.helpScroll.dec
+        app.needsRedraw = true
+    else:
+      if app.scrollOffset > 0:
+        app.scrollOffset.dec
+        app.needsRedraw = true
+
+  of Key.Down:
+    if app.showHelp:
+      app.helpScroll.inc
+      app.needsRedraw = true
+    else:
+      let maxScroll = max(0, app.messages.len - app.chatHeight())
+      if app.scrollOffset < maxScroll:
+        app.scrollOffset.inc
+        app.needsRedraw = true
+
+  of Key.PageUp:
+    if app.showHelp:
+      app.helpScroll = max(0, app.helpScroll - 5)
+    else:
+      app.scrollOffset = max(0, app.scrollOffset - app.chatHeight())
+    app.needsRedraw = true
+
+  of Key.PageDown:
+    if app.showHelp:
+      app.helpScroll.inc(5)
+    else:
+      let maxScroll = max(0, app.messages.len - app.chatHeight())
+      app.scrollOffset = min(maxScroll, app.scrollOffset + app.chatHeight())
+    app.needsRedraw = true
+
+  of Key.CtrlL:
+    # Clear screen
+    app.messages = @[]
+    app.scrollOffset = 0
+    app.needsRedraw = true
+
+  of Key.CtrlH:
+    # Toggle help
+    app.showHelp = not app.showHelp
+    app.needsRedraw = true
+
+  of Key.CtrlT:
+    # Toggle tool panel (placeholder)
+    discard
+
   else:
     # Handle printable characters
     let keyOrd = ord(key)
@@ -149,75 +241,133 @@ proc handleInput(app: TuiApp, key: Key) =
 
 proc renderHeader(app: TuiApp) =
   let w = terminalWidth()
+  let provider = app.cfg.agents.defaults.provider
+  let model = app.cfg.agents.defaults.model
 
-  # Title
-  app.tb.write(2, 0, "🦞 PicoClaw", fgGreen)
+  # Title with color
+  app.tb.write(2, 0, "🦞 ", fgGreen)
+  app.tb.write(5, 0, "PicoClaw", fgGreen, {styleBright})
 
-  # Status info (right aligned)
-  let statusText = "Interactive Mode  |  Ctrl+C: Quit"
-  let statusX = w - statusText.len - 2
-  if statusX > 20:
-    app.tb.write(statusX, 0, statusText)
+  # Provider and model info (center-right)
+  let infoText = provider & " / " & model
+  let infoX = w - infoText.len - 15
+  if infoX > 20:
+    app.tb.write(infoX, 0, infoText, fgCyan)
 
-  # Reset attributes before separator
+  # Status (rightmost)
+  if app.isGenerating:
+    app.tb.write(w - 3, 0, "●", fgYellow)
+  else:
+    app.tb.write(w - 3, 0, "○", fgGreen)
+
+  # Separator line (dim)
   app.tb.resetAttributes()
-
-  # Separator line (dim/gray)
   for x in 0..<w:
     app.tb.write(x, 1, "─", {styleDim})
 
-proc renderChat(app: TuiApp) =
+proc renderHelpPanel(app: TuiApp) =
+  if not app.showHelp: return
+
   let w = terminalWidth()
+  let h = terminalHeight()
+  let panelX = w - HelpWidth
+
+  # Draw panel border
+  for y in 2..<h-3:
+    app.tb.write(panelX, y, "│", {styleDim})
+
+  # Help content
+  let helpItems = @[
+    ("Keybindings", ""),
+    ("", ""),
+    ("Enter", "Send message"),
+    ("Shift+Enter", "New line"),
+    ("↑/↓", "Scroll chat"),
+    ("PgUp/PgDn", "Page scroll"),
+    ("Ctrl+H", "Toggle help"),
+    ("Ctrl+L", "Clear chat"),
+    ("Ctrl+C", "Quit"),
+    ("", ""),
+    ("Provider", app.cfg.agents.defaults.provider),
+    ("Model", app.cfg.agents.defaults.model),
+  ]
+
+  var y = 3
+  for i, (key, desc) in helpItems:
+    if y >= h - 4: break
+    if i < app.helpScroll: continue
+
+    if key.len > 0 and desc.len > 0:
+      app.tb.write(panelX + 2, y, key, fgYellow)
+      app.tb.write(panelX + 14, y, desc)
+    elif key.len > 0:
+      app.tb.write(panelX + 2, y, key, {styleBright})
+    y.inc
+
+proc renderChat(app: TuiApp) =
+  let w = app.chatWidth()
   let h = app.chatHeight()
   let startY = HeaderHeight + 1
+  let maxContentWidth = w - 12
 
-  # Clear chat area (reset attributes first to prevent color bleeding)
+  # Clear chat area
   app.tb.resetAttributes()
   for y in startY..<(startY + h):
     for x in 0..<w:
       app.tb.write(x, y, " ")
 
-  # Draw messages from bottom up
-  var currentY = startY + h - 1
+  # Build display lines from messages
+  var displayLines: seq[tuple[role: string, text: string, indent: int]] = @[]
 
-  for i in countdown(app.messages.len - 1, 0):
+  for msg in app.messages:
+    # Role indicator line
+    case msg.role:
+    of "user":
+      displayLines.add(("user", "You:", 0))
+    of "assistant":
+      displayLines.add(("assistant", "🦞:", 0))
+    of "system":
+      displayLines.add(("system", "⚙:", 0))
+    of "tool":
+      displayLines.add(("tool", "🔧:", 0))
+    else:
+      displayLines.add(("", "•", 0))
+
+    # Content lines (wrapped)
+    let wrapped = wrapText(msg.content, maxContentWidth)
+    for i, line in wrapped:
+      displayLines.add((msg.role, line, 6))
+
+    # Empty line between messages
+    displayLines.add(("", "", 0))
+
+  # Draw from bottom up with scroll offset
+  var currentY = startY + h - 1
+  let startIdx = max(0, displayLines.len - h - app.scrollOffset)
+  let endIdx = min(displayLines.len - 1, displayLines.len - 1 - app.scrollOffset)
+
+  for i in countdown(endIdx, startIdx):
     if currentY < startY: break
 
-    let msg = app.messages[i]
-    let lines = msg.content.splitLines()
+    let (role, text, indent) = displayLines[i]
 
-    # Draw from last line to first
-    for lineIdx in countdown(lines.len - 1, 0):
-      if currentY < startY: break
-
-      let line = lines[lineIdx]
-
-      # Role indicator on first line of message
-      if lineIdx == 0:
-        case msg.role:
-        of "user":
-          app.tb.write(2, currentY, "You:", fgCyan)
-        of "assistant":
-          app.tb.write(2, currentY, "🦞:", fgGreen)
-        of "system":
-          app.tb.write(2, currentY, "⚙:", fgYellow)
-        else:
-          app.tb.write(2, currentY, "•")
-
-        # Reset attributes before content
-        app.tb.resetAttributes()
-
-        # Content (truncated to fit)
-        let maxWidth = w - 10
-        let displayText = if line.len > maxWidth: line[0..<maxWidth] & "..." else: line
-        app.tb.write(8, currentY, displayText)
+    if text.len > 0:
+      # Set color based on role
+      case role:
+      of "user":
+        app.tb.write(2, currentY, text, fgCyan)
+      of "assistant":
+        app.tb.write(2, currentY, text, fgGreen)
+      of "system":
+        app.tb.write(2, currentY, text, fgYellow)
+      of "tool":
+        app.tb.write(2, currentY, text, fgMagenta)
       else:
-        # Continuation lines
-        let maxWidth = w - 10
-        let displayText = if line.len > maxWidth: line[0..<maxWidth] & "..." else: line
-        app.tb.write(8, currentY, displayText)
+        app.tb.write(indent, currentY, text)
 
-      currentY.dec
+      app.tb.resetAttributes()
+
+    currentY.dec
 
 proc renderInput(app: TuiApp) =
   let w = terminalWidth()
@@ -226,7 +376,7 @@ proc renderInput(app: TuiApp) =
 
   app.tb.resetAttributes()
 
-  # Separator line (dim/gray)
+  # Separator line (dim)
   for x in 0..<w:
     app.tb.write(x, h - 3, "─", {styleDim})
 
@@ -235,22 +385,29 @@ proc renderInput(app: TuiApp) =
   app.tb.resetAttributes()
 
   # Visible input text
-  app.tb.write(InputStartX, inputY, app.visualInput)
+  let inputLines = app.visualInput.splitLines()
+  for i, line in inputLines:
+    let y = inputY + i
+    if y < h - 1:
+      app.tb.write(InputStartX, y, line)
 
-  # Show cursor (blinking underscore style like tui_widget)
-  let cursorScreenX = InputStartX + app.visualCursorX
-  if app.cursorX < app.inputBuffer.len:
-    # Cursor on a character - show character with inverse/blink
-    app.tb.write(cursorScreenX, inputY, $app.visualInput[app.visualCursorX], styleUnderscore)
-  else:
-    # Cursor at end - show underscore
-    app.tb.write(cursorScreenX, inputY, "_", styleUnderscore)
+  # Cursor (underscore style)
+  let cursorY = inputY + app.visualInput[0..<app.visualCursorX].count('\n')
+  let lineStart = app.visualInput.rfind('\n', 0, app.visualCursorX - 1) + 1
+  let cursorXInLine = app.visualCursorX - lineStart
+  let cursorScreenX = InputStartX + cursorXInLine
+
+  if cursorScreenX < w - 1 and cursorY < h - 1:
+    if app.cursorX < app.inputBuffer.len and app.inputBuffer[app.cursorX] != '\n':
+      app.tb.write(cursorScreenX, cursorY, $app.inputBuffer[app.cursorX], styleUnderscore)
+    else:
+      app.tb.write(cursorScreenX, cursorY, "_", styleUnderscore)
 
   app.tb.resetAttributes()
 
-  # Generating indicator
-  if app.isGenerating:
-    app.tb.write(w - 15, inputY, "[thinking...]", fgYellow)
+  # Status/help hint
+  let hintText = if app.showHelp: "[H:hide]" else: "[H:help]"
+  app.tb.write(w - hintText.len - 2, inputY, hintText, {styleDim})
 
 proc render*(app: TuiApp) =
   if not app.needsRedraw: return
@@ -259,6 +416,7 @@ proc render*(app: TuiApp) =
   app.renderHeader()
   app.renderChat()
   app.renderInput()
+  app.renderHelpPanel()
   app.tb.display()
 
   app.needsRedraw = false

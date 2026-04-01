@@ -51,7 +51,7 @@ proc agent(message = "", session = "cli:default") =
   else:
     # TUI mode (default)
     setControlCHook(tui_core.cleanup)
-    let app = newTuiApp(agentLoop)
+    let app = newTuiApp(agentLoop, cfg)
     waitFor app.run()
 
 proc gateway() =
