@@ -150,15 +150,8 @@ proc handleInput(app: TuiApp, key: Key) =
 proc renderHeader(app: TuiApp) =
   let w = terminalWidth()
 
-  # Draw header background first
-  for x in 0..<w:
-    app.tb.write(x, 0, " ", bgBlue)
-
-  # Reset attributes before writing text (emoji doesn't need bgBlue, bg already set)
-  app.tb.resetAttributes()
-
-  # Title - write without bgBlue since background is already blue
-  app.tb.write(2, 0, "🦞 PicoClaw")
+  # Title
+  app.tb.write(2, 0, "🦞 PicoClaw", fgGreen)
 
   # Status info (right aligned)
   let statusText = "Interactive Mode  |  Ctrl+C: Quit"
@@ -169,9 +162,9 @@ proc renderHeader(app: TuiApp) =
   # Reset attributes before separator
   app.tb.resetAttributes()
 
-  # Separator line
+  # Separator line (dim/gray)
   for x in 0..<w:
-    app.tb.write(x, 1, "─")
+    app.tb.write(x, 1, "─", {styleDim})
 
 proc renderChat(app: TuiApp) =
   let w = terminalWidth()
@@ -233,9 +226,9 @@ proc renderInput(app: TuiApp) =
 
   app.tb.resetAttributes()
 
-  # Separator line
+  # Separator line (dim/gray)
   for x in 0..<w:
-    app.tb.write(x, h - 3, "─")
+    app.tb.write(x, h - 3, "─", {styleDim})
 
   # Input prompt
   app.tb.write(2, inputY, "🦞", fgCyan)
