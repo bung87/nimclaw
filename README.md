@@ -5,6 +5,8 @@
 [![CI](https://github.com/bung87/nimclaw/actions/workflows/ci.yml/badge.svg)](https://github.com/bung87/nimclaw/actions/workflows/ci.yml)
 [![GitHub stars](https://img.shields.io/github/stars/bung87/nimclaw?style=social)](https://github.com/bung87/nimclaw/stargazers)
 
+![screenhot](./sreenshot.png)
+
 Ultra-efficient AI assistant in Nim. A high-performance implementation inspired by Nimclaw.
 
 ## Features
