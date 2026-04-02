@@ -492,6 +492,13 @@ proc renderChat(app: TuiApp) =
 
   # Draw from bottom up with scroll offset
   var currentY = startY + h - 1
+
+  # Draw Ctrl+D hint at the bottom of chat area if visible
+  if app.ctrlDHintVisible and currentY >= startY:
+    let hint = "⚠ Press Ctrl+D again to exit"
+    drawText(hint, 2, currentY, FG_COLOR_YELLOW, BG_COLOR_DEFAULT, STYLE_FAINT)
+    currentY.dec
+
   let startIdx = max(0, displayLines.len - h - app.scrollOffset)
   let endIdx = min(displayLines.len - 1, displayLines.len - 1 - app.scrollOffset)
 
@@ -522,12 +529,6 @@ proc renderInput(app: TuiApp) =
 
   # Input prompt
   drawText("🦞", 2, inputY, FG_COLOR_CYAN, BG_COLOR_DEFAULT, STYLE_NONE)
-
-  # Ctrl+D hint
-  if app.ctrlDHintVisible:
-    let hint = "Press Ctrl+D again to exit"
-    let hintX = max(0, w - hint.runeLen - 2)
-    drawText(hint, hintX, inputY, FG_COLOR_YELLOW, BG_COLOR_DEFAULT, STYLE_FAINT)
 
   # Visible input text
   let inputLines = app.visualInput.splitLines()
