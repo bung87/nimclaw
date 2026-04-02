@@ -410,10 +410,6 @@ proc renderInput(app: TuiApp) =
 
   app.tb.resetAttributes()
 
-  # Status/help hint
-  let hintText = if app.showHelp: "[H:hide]" else: "[H:help]"
-  app.tb.write(w - hintText.len - 2, inputY, hintText, {styleDim})
-
 proc render*(app: TuiApp) =
   if not app.needsRedraw: return
 

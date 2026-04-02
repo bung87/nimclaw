@@ -1,8 +1,49 @@
-import std/[tables, json, options, strutils, times]
+import std/[tables, json, options, strutils, times, re]
 import chronicles
 import types
 
 # Helper Functions
+
+proc extractThinkContent*(content: string): tuple[thinking: string, response: string] {.raises: [].} =
+  ## Extract <think>...</think> content from reasoning models (like DeepSeek-R1).
+  ## Returns the thinking content separately from the main response.
+  try:
+    var extractedThinking = ""
+    var cleanedResponse = content
+
+    # Find all <think>...</think> blocks
+    let thinkPattern = re"(?s)<think>(.*?)</think>"
+    var start = 0
+    while true:
+      let bounds = cleanedResponse.findBounds(thinkPattern, start)
+      if bounds[0] == -1:
+        break
+      let matchContent = cleanedResponse[bounds[0]..bounds[1]]
+      # Extract inner content
+      let innerStart = matchContent.find(">") + 1
+      let innerEnd = matchContent.rfind("<") - 1
+      if innerEnd >= innerStart:
+        let inner = matchContent[innerStart..innerEnd].strip()
+        if inner.len > 0:
+          if extractedThinking.len > 0:
+            extractedThinking.add("\n\n")
+          extractedThinking.add(inner)
+      # Remove the think block from response
+      cleanedResponse = cleanedResponse[0..<bounds[0]] & cleanedResponse[(bounds[1]+1)..^1]
+
+    (thinking: extractedThinking, response: cleanedResponse.strip())
+  except CatchableError:
+    (thinking: "", response: content)
+
+proc formatWithThinking*(thinking, response: string): string {.raises: [].} =
+  ## Format content with thinking section as labeled text
+  if thinking.len == 0:
+    return response
+
+  var formatted = "💭 Thinking:\n" & thinking.indent(2) & "\n\n"
+  if response.len > 0:
+    formatted.add(response)
+  return formatted
 
 proc safeParseJson*(s: string): JsonNode {.raises: [].} =
   ## Safely parse JSON, return empty object on error
@@ -33,17 +74,25 @@ proc normalizeArguments*(argsNode: JsonNode): Table[string, JsonNode] {.raises: 
 proc tryParseToolCallFromContent*(content: string): seq[ToolCall] {.raises: [].} =
   ## Ollama-specific: Some models output tool calls as JSON in content field
   ## instead of using the proper tool_calls array. This parses that as a fallback.
+  ##
+  ## STRICT: Only handles clean JSON tool calls that:
+  ## 1. Start with '{' and end with '}'
+  ## 2. Have no newlines (single line only)
+  ## 3. Are valid JSON with {"name": "...", "arguments": {...}} format
+  ##
+  ## Mixed text+JSON is NOT handled because there's no reliable way to distinguish
+  ## between natural language containing JSON and an actual tool call.
   var calls: seq[ToolCall] = @[]
   let trimmed = content.strip()
 
   if trimmed.len == 0:
     return calls
 
-  # Only try if content starts with '{' (JSON object)
-  if trimmed[0] != '{':
+  # Only try if content starts with '{' and ends with '}' (JSON object)
+  if trimmed[0] != '{' or trimmed[^1] != '}':
     return calls
 
-  # Check for newlines - if present, likely mixed text+JSON, skip
+  # STRICT: Check for newlines - if present, it's mixed text+JSON, skip parsing.
   if '\n' in trimmed:
     return calls
 
@@ -82,14 +131,18 @@ method normalizeResponse*(a: OpenAIAdapter, json: JsonNode): LLMResponse {.gcsaf
       if choice.hasKey("message") and choice["message"].kind == JObject:
         let msg = choice["message"]
 
-        # Extract content
+        # Extract content (and handle <think> tags from reasoning models)
         var hasContent = false
         var contentStr = ""
         if msg.hasKey("content") and msg["content"].kind != JNull:
           contentStr = msg["content"].getStr("")
           if contentStr.len > 0:
-            resp.content = some(contentStr)
-            hasContent = true
+            # Extract and format thinking content
+            let (thinking, cleanContent) = extractThinkContent(contentStr)
+            contentStr = formatWithThinking(thinking, cleanContent)
+            if contentStr.len > 0:
+              resp.content = some(contentStr)
+              hasContent = true
 
         # Extract tool calls
         if msg.hasKey("tool_calls") and msg["tool_calls"].kind == JArray:
@@ -168,11 +221,15 @@ method normalizeResponse*(a: OllamaAdapter, json: JsonNode): LLMResponse {.gcsaf
         msgFound = true
 
     if msgFound:
-      # Extract content
+      # Extract content (and handle <think> tags from reasoning models)
       if msg.hasKey("content"):
-        let content = msg["content"].getStr("")
+        var content = msg["content"].getStr("")
         if content.len > 0:
-          resp.content = some(content)
+          # Extract and format thinking content
+          let (thinking, cleanContent) = extractThinkContent(content)
+          content = formatWithThinking(thinking, cleanContent)
+          if content.len > 0:
+            resp.content = some(content)
 
       # Extract tool_calls (standard format)
       if msg.hasKey("tool_calls") and msg["tool_calls"].kind == JArray:
@@ -264,7 +321,12 @@ method normalizeResponse*(a: AnthropicAdapter, json: JsonNode): LLMResponse {.gc
             resp.tool_calls.add(toolCall)
 
       if textContent.len > 0:
-        resp.content = some(textContent.join("\n"))
+        var contentStr = textContent.join("\n")
+        # Extract and format thinking content from reasoning models
+        let (thinking, cleanContent) = extractThinkContent(contentStr)
+        contentStr = formatWithThinking(thinking, cleanContent)
+        if contentStr.len > 0:
+          resp.content = some(contentStr)
 
     if json.hasKey("stop_reason"):
       resp.finish_reason = json["stop_reason"].getStr("stop")
@@ -328,7 +390,12 @@ method normalizeResponse*(a: GeminiAdapter, json: JsonNode): LLMResponse {.gcsaf
               resp.tool_calls.add(toolCall)
 
           if textParts.len > 0:
-            resp.content = some(textParts.join("\n"))
+            var contentStr = textParts.join("\n")
+            # Extract and format thinking content from reasoning models
+            let (thinking, cleanContent) = extractThinkContent(contentStr)
+            contentStr = formatWithThinking(thinking, cleanContent)
+            if contentStr.len > 0:
+              resp.content = some(contentStr)
 
       if candidate.hasKey("finishReason"):
         resp.finish_reason = candidate["finishReason"].getStr("stop")
