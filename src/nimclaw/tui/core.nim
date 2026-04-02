@@ -28,6 +28,7 @@ type
     showHelp*: bool
     helpScroll*: int
     ctrlDCount*: int
+    ctrlDHintVisible*: bool
 
 const
   HeaderHeight = 2
@@ -60,7 +61,8 @@ proc newTuiApp*(agentLoop: AgentLoop, cfg: Config): TuiApp =
     isGenerating: false,
     showHelp: false,
     helpScroll: 0,
-    ctrlDCount: 0
+    ctrlDCount: 0,
+    ctrlDHintVisible: false
   )
 
 proc chatHeight(app: TuiApp): int =
@@ -240,6 +242,9 @@ proc handleEvent(app: TuiApp, ev: Event) =
 
     if key != EVENT_KEY_CTRL_D:
       app.ctrlDCount = 0
+      if app.ctrlDHintVisible:
+        app.ctrlDHintVisible = false
+        app.needsRedraw = true
 
     case key
     of EVENT_KEY_ESC:
@@ -339,6 +344,9 @@ proc handleEvent(app: TuiApp, ev: Event) =
       app.ctrlDCount.inc
       if app.ctrlDCount >= 2:
         app.running = false
+      elif app.ctrlDCount == 1 and not app.ctrlDHintVisible:
+        app.ctrlDHintVisible = true
+        app.needsRedraw = true
 
     of EVENT_KEY_F1:
       # Toggle help
@@ -514,6 +522,12 @@ proc renderInput(app: TuiApp) =
 
   # Input prompt
   drawText("🦞", 2, inputY, FG_COLOR_CYAN, BG_COLOR_DEFAULT, STYLE_NONE)
+
+  # Ctrl+D hint
+  if app.ctrlDHintVisible:
+    let hint = "Press Ctrl+D again to exit"
+    let hintX = max(0, w - hint.runeLen - 2)
+    drawText(hint, hintX, inputY, FG_COLOR_YELLOW, BG_COLOR_DEFAULT, STYLE_FAINT)
 
   # Visible input text
   let inputLines = app.visualInput.splitLines()
