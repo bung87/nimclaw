@@ -522,7 +522,11 @@ proc renderInput(app: TuiApp) =
     if y < h - 1:
       drawText(line, InputStartX, y, FG_COLOR_DEFAULT, BG_COLOR_DEFAULT, STYLE_NONE)
 
-  # Position real cursor
+proc positionCursor(app: TuiApp) =
+  let w = getTerminalWidth()
+  let h = getTerminalHeight()
+  let inputY = h - 2
+
   let cursorY = inputY + countNewlines(app.visualInput, app.visualCursorX)
   let lineStartRunePos = lastNewlineRunePos(app.visualInput, app.visualCursorX) + 1
   let cursorXInLine = app.visualCursorX - lineStartRunePos
@@ -544,6 +548,7 @@ proc render*(app: TuiApp) =
     app.renderInput()
     app.renderHelpPanel()
     texalotRender()
+    app.positionCursor()
 
   app.needsRedraw = false
 
