@@ -27,6 +27,7 @@ type
     isGenerating*: bool
     showHelp*: bool
     helpScroll*: int
+    ctrlDCount*: int
 
 const
   HeaderHeight = 2
@@ -58,7 +59,8 @@ proc newTuiApp*(agentLoop: AgentLoop, cfg: Config): TuiApp =
     needsRedraw: true,
     isGenerating: false,
     showHelp: false,
-    helpScroll: 0
+    helpScroll: 0,
+    ctrlDCount: 0
   )
 
 proc chatHeight(app: TuiApp): int =
@@ -236,6 +238,9 @@ proc handleEvent(app: TuiApp, ev: Event) =
     let kev = cast[KeyEvent](ev)
     let key = kev.key
 
+    if key != EVENT_KEY_CTRL_D:
+      app.ctrlDCount = 0
+
     case key
     of EVENT_KEY_ESC:
       if app.showHelp:
@@ -329,6 +334,11 @@ proc handleEvent(app: TuiApp, ev: Event) =
       app.messages = @[]
       app.scrollOffset = 0
       app.needsRedraw = true
+
+    of EVENT_KEY_CTRL_D:
+      app.ctrlDCount.inc
+      if app.ctrlDCount >= 2:
+        app.running = false
 
     of EVENT_KEY_F1:
       # Toggle help
