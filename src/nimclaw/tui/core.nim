@@ -25,8 +25,6 @@ type
     scrollOffset*: int
     needsRedraw*: bool
     isGenerating*: bool
-    showHelp*: bool
-    helpScroll*: int
     ctrlDCount*: int
     ctrlDHintVisible*: bool
 
@@ -34,7 +32,6 @@ const
   HeaderHeight = 2
   InputHeight = 3
   InputStartX = 6
-  HelpWidth = 30
 
 proc readEventGcsafe(): Event =
   {.gcsafe.}:
@@ -46,6 +43,9 @@ proc deinitTextalotGcsafe() =
 
 proc newTuiApp*(agentLoop: AgentLoop, cfg: Config): TuiApp =
   initTextalot()
+  # Disable mouse tracking so standard terminal text selection works
+  stdout.write("\x1b[?1003l\x1b[?1006l")
+  stdout.flushFile()
 
   result = TuiApp(
     running: true,
@@ -59,8 +59,6 @@ proc newTuiApp*(agentLoop: AgentLoop, cfg: Config): TuiApp =
     scrollOffset: 0,
     needsRedraw: true,
     isGenerating: false,
-    showHelp: false,
-    helpScroll: 0,
     ctrlDCount: 0,
     ctrlDHintVisible: false
   )
@@ -69,11 +67,7 @@ proc chatHeight(app: TuiApp): int =
   getTerminalHeight() - HeaderHeight - InputHeight - 1
 
 proc chatWidth(app: TuiApp): int =
-  let w = getTerminalWidth()
-  if app.showHelp:
-    w - HelpWidth - 1
-  else:
-    w
+  getTerminalWidth()
 
 # Calculate visible portion of input
 proc updateVisualInput(app: TuiApp) =
@@ -248,11 +242,7 @@ proc handleEvent(app: TuiApp, ev: Event) =
 
     case key
     of EVENT_KEY_ESC:
-      if app.showHelp:
-        app.showHelp = false
-        app.needsRedraw = true
-      else:
-        app.running = false
+      app.running = false
 
     of EVENT_KEY_CTRL_C:
       app.running = false
@@ -300,38 +290,23 @@ proc handleEvent(app: TuiApp, ev: Event) =
       app.needsRedraw = true
 
     of EVENT_KEY_ARROW_UP:
-      if app.showHelp:
-        if app.helpScroll > 0:
-          app.helpScroll.dec
-          app.needsRedraw = true
-      else:
-        if app.scrollOffset > 0:
-          app.scrollOffset.dec
-          app.needsRedraw = true
+      if app.scrollOffset > 0:
+        app.scrollOffset.dec
+        app.needsRedraw = true
 
     of EVENT_KEY_ARROW_DOWN:
-      if app.showHelp:
-        app.helpScroll.inc
+      let maxScroll = max(0, app.messages.len - app.chatHeight())
+      if app.scrollOffset < maxScroll:
+        app.scrollOffset.inc
         app.needsRedraw = true
-      else:
-        let maxScroll = max(0, app.messages.len - app.chatHeight())
-        if app.scrollOffset < maxScroll:
-          app.scrollOffset.inc
-          app.needsRedraw = true
 
     of EVENT_KEY_PGUP:
-      if app.showHelp:
-        app.helpScroll = max(0, app.helpScroll - 5)
-      else:
-        app.scrollOffset = max(0, app.scrollOffset - app.chatHeight())
+      app.scrollOffset = max(0, app.scrollOffset - app.chatHeight())
       app.needsRedraw = true
 
     of EVENT_KEY_PGDN:
-      if app.showHelp:
-        app.helpScroll.inc(5)
-      else:
-        let maxScroll = max(0, app.messages.len - app.chatHeight())
-        app.scrollOffset = min(maxScroll, app.scrollOffset + app.chatHeight())
+      let maxScroll = max(0, app.messages.len - app.chatHeight())
+      app.scrollOffset = min(maxScroll, app.scrollOffset + app.chatHeight())
       app.needsRedraw = true
 
     of EVENT_KEY_CTRL_L:
@@ -347,11 +322,6 @@ proc handleEvent(app: TuiApp, ev: Event) =
       elif app.ctrlDCount == 1 and not app.ctrlDHintVisible:
         app.ctrlDHintVisible = true
         app.needsRedraw = true
-
-    of EVENT_KEY_F1:
-      # Toggle help
-      app.showHelp = not app.showHelp
-      app.needsRedraw = true
 
     of EVENT_KEY_CTRL_T:
       # Toggle tool panel (placeholder)
@@ -370,20 +340,13 @@ proc handleEvent(app: TuiApp, ev: Event) =
     let mev = cast[MouseEvent](ev)
     case mev.key
     of EVENT_MOUSE_WHEEL_UP:
-      if app.showHelp:
-        if app.helpScroll > 0:
-          app.helpScroll.dec
-      else:
-        if app.scrollOffset > 0:
-          app.scrollOffset.dec
+      if app.scrollOffset > 0:
+        app.scrollOffset.dec
       app.needsRedraw = true
     of EVENT_MOUSE_WHEEL_DOWN:
-      if app.showHelp:
-        app.helpScroll.inc
-      else:
-        let maxScroll = max(0, app.messages.len - app.chatHeight())
-        if app.scrollOffset < maxScroll:
-          app.scrollOffset.inc
+      let maxScroll = max(0, app.messages.len - app.chatHeight())
+      if app.scrollOffset < maxScroll:
+        app.scrollOffset.inc
       app.needsRedraw = true
     else:
       discard
@@ -417,45 +380,6 @@ proc renderHeader(app: TuiApp) =
   # Separator line (dim)
   drawRectangle(0, 1, w, 2, BG_COLOR_DEFAULT, FG_COLOR_DEFAULT, "─", STYLE_FAINT)
 
-proc renderHelpPanel(app: TuiApp) =
-  if not app.showHelp: return
-
-  let w = getTerminalWidth()
-  let h = getTerminalHeight()
-  let panelX = w - HelpWidth
-
-  # Draw panel border
-  for y in 2..<h-3:
-    drawText("│", panelX, y, FG_COLOR_DEFAULT, BG_COLOR_DEFAULT, STYLE_FAINT)
-
-  # Help content
-  let helpItems = @[
-    ("Keybindings", ""),
-    ("", ""),
-    ("Enter", "Send message"),
-    ("Shift+Enter", "New line"),
-    ("↑/↓", "Scroll chat"),
-    ("PgUp/PgDn", "Page scroll"),
-    ("Ctrl+H", "Toggle help"),
-    ("Ctrl+L", "Clear chat"),
-    ("Ctrl+C", "Quit"),
-    ("", ""),
-    ("Provider", app.cfg.agents.defaults.provider),
-    ("Model", app.cfg.agents.defaults.model),
-  ]
-
-  var y = 3
-  for i, (key, desc) in helpItems:
-    if y >= h - 4: break
-    if i < app.helpScroll: continue
-
-    if key.len > 0 and desc.len > 0:
-      drawText(key, panelX + 2, y, FG_COLOR_YELLOW, BG_COLOR_DEFAULT, STYLE_NONE)
-      drawText(desc, panelX + 14, y, FG_COLOR_DEFAULT, BG_COLOR_DEFAULT, STYLE_NONE)
-    elif key.len > 0:
-      drawText(key, panelX + 2, y, FG_COLOR_DEFAULT, BG_COLOR_DEFAULT, STYLE_BOLD)
-    y.inc
-
 proc renderChat(app: TuiApp) =
   let w = app.chatWidth()
   let h = app.chatHeight()
@@ -474,7 +398,7 @@ proc renderChat(app: TuiApp) =
     of "user":
       displayLines.add(("user", "You:", 0))
     of "assistant":
-      displayLines.add(("assistant", "🦞:", 0))
+      displayLines.add(("assistant", ">", 0))
     of "system":
       displayLines.add(("system", "⚙:", 0))
     of "tool":
@@ -561,7 +485,6 @@ proc render*(app: TuiApp) =
     app.renderHeader()
     app.renderChat()
     app.renderInput()
-    app.renderHelpPanel()
     texalotRender()
     app.positionCursor()
 
