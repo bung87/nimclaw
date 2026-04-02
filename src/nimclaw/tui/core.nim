@@ -113,6 +113,11 @@ proc sendMessage(app: TuiApp) {.async.} =
   let userInput = app.inputBuffer.strip()
   if userInput.len == 0: return
 
+  # Handle quit command
+  if userInput.toLowerAscii() in ["quit", "exit", "q"]:
+    app.running = false
+    return
+
   app.addMessage("user", userInput)
   app.inputBuffer = ""
   app.cursorX = 0
@@ -431,7 +436,7 @@ proc run*(app: TuiApp) {.async.} =
       app.handleInput(key)
 
     app.render()
-    await sleepAsync(20)
+    await sleepAsync(20 * Millisecond)
 
   illwillDeinit()
   showCursor()
