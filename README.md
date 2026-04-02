@@ -68,23 +68,62 @@ Edit `~/.nimclaw/config.json`:
 {
   "agents": {
     "defaults": {
+      "workspace": "~/.nimclaw/workspace",
       "model": "gpt-4",
-      "max_tokens": 8192
+      "provider": "openai",
+      "max_tokens": 8192,
+      "temperature": 0.7,
+      "max_tool_iterations": 20
     }
   },
   "providers": {
     "openai": {
-      "api_key": "sk-..."
+      "api_key": "sk-...",
+      "api_base": "https://api.openai.com/v1"
     }
   },
   "channels": {
     "telegram": {
       "enabled": true,
-      "token": "YOUR_BOT_TOKEN"
+      "token": "YOUR_BOT_TOKEN",
+      "allow_from": []
+    }
+  },
+  "gateway": {
+    "host": "0.0.0.0",
+    "port": 18790
+  },
+  "tools": {
+    "web": {
+      "search": {
+        "api_key": "",
+        "max_results": 5
+      }
     }
   }
 }
 ```
+
+#### Configuration Fields
+
+| Section | Field | Description | Default |
+|---------|-------|-------------|---------|
+| `agents.defaults` | `workspace` | Agent workspace directory | `~/.nimclaw/workspace` |
+| `agents.defaults` | `model` | Default LLM model | `glm-4.7` |
+| `agents.defaults` | `provider` | Explicit provider (`openai`, `anthropic`, `ollama`, `zhipu`, `kimi`, `groq`, `gemini`, `openrouter`, `vllm`) | `zhipu` |
+| `agents.defaults` | `max_tokens` | Maximum tokens per response | `8192` |
+| `agents.defaults` | `temperature` | Sampling temperature | `0.7` |
+| `agents.defaults` | `max_tool_iterations` | Max tool call loops per request | `20` |
+| `providers.{name}` | `api_key` | API key for the provider | `""` |
+| `providers.{name}` | `api_base` | Custom base URL for the provider | Provider-specific default or `""` |
+| `channels.*` | `enabled` | Enable the channel | `false` |
+| `channels.*` | `allow_from` | Allowed sender IDs (empty = allow all) | `[]` |
+| `gateway` | `host` | Gateway bind address | `0.0.0.0` |
+| `gateway` | `port` | Gateway port | `18790` |
+| `tools.web.search` | `api_key` | Web search API key | `""` |
+| `tools.web.search` | `max_results` | Max web search results | `5` |
+
+Supported providers: `anthropic`, `openai`, `openrouter`, `groq`, `zhipu`, `vllm`, `gemini`, `kimi`, `ollama`.
 
 ## Skills
 
