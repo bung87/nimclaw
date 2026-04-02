@@ -251,6 +251,12 @@ proc handleEvent(app: TuiApp, ev: Event) =
       if app.inputBuffer.len > 0:
         discard app.sendMessage()
 
+    of EVENT_KEY_SPACE:
+      app.inputBuffer.insert(" ", app.cursorX)
+      app.cursorX.inc
+      app.updateVisualInput()
+      app.needsRedraw = true
+
     of EVENT_KEY_BACKSPACE, EVENT_KEY_BACKSPACE2:
       if app.cursorX > 0:
         app.deleteRuneBefore()
