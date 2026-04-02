@@ -37,6 +37,7 @@ const
 proc newTuiApp*(agentLoop: AgentLoop, cfg: Config): TuiApp =
   illwillInit(fullscreen = true)
   hideCursor()
+  setDoubleBuffering(false)
 
   result = TuiApp(
     tb: newTerminalBuffer(terminalWidth(), terminalHeight()),
