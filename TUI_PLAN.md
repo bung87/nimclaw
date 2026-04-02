@@ -7,7 +7,7 @@ Full-screen terminal UI using [illwill](https://github.com/johnnovak/illwill) wi
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ 🦞 PicoClaw          ollama / qwen2.5-coder:7b          ○    │
+│ 🦞 Nimclaw          ollama / qwen2.5-coder:7b          ○    │
 ├──────────────────────────────────────────────────────────────┤
 │                                                              │
 │  You:      hello                                             │
@@ -29,7 +29,7 @@ Full-screen terminal UI using [illwill](https://github.com/johnnovak/illwill) wi
 ### With Help Panel (Ctrl+H)
 ```
 ┌────────────────────────────────────────────┬─────────────────┐
-│ 🦞 PicoClaw          ollama / qwen2.5...   │ Keybindings     │
+│ 🦞 Nimclaw          ollama / qwen2.5...   │ Keybindings     │
 ├────────────────────────────────────────────┼─────────────────┤
 │                                            │                 │
 │  You:      hello                           │ Enter      Send │

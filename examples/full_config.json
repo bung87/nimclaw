@@ -1,7 +1,7 @@
 {
   "agents": {
     "defaults": {
-      "workspace": "~/.picoclaw/workspace",
+      "workspace": "~/.nimclaw/workspace",
       "model": "llama3",
       "provider": "ollama",
       "max_tokens": 8192,

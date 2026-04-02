@@ -99,7 +99,7 @@ method send*(c: DingTalkChannel, msg: OutboundMessage) {.async.} =
   let payload = %*{
     "msgtype": "markdown",
     "markdown": {
-      "title": "PicoClaw",
+      "title": "Nimclaw",
       "text": msg.content
     }
   }

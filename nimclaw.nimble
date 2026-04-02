@@ -1,5 +1,5 @@
 version       = "0.1.0"
-author        = "PicoClaw contributors"
+author        = "Nimclaw contributors"
 description   = "Ultra-lightweight personal AI agent in Nim"
 license       = "MIT"
 srcDir        = "src"

@@ -12,7 +12,7 @@ type
     tools*: ToolRegistry
 
 proc getGlobalConfigDir(): string =
-  getHomeDir() / ".picoclaw"
+  getHomeDir() / ".nimclaw"
 
 proc newContextBuilder*(workspace: string): ContextBuilder =
   let wd = getCurrentDir()
@@ -46,9 +46,9 @@ proc getIdentity(cb: ContextBuilder): string =
   let runtime = hostOS & " " & hostCPU & ", Nim " & NimVersion
   let toolsSection = cb.buildToolsSection()
 
-  return """# picoclaw 🦞
+  return """# nimclaw 🦞
 
-You are picoclaw, a helpful AI assistant.
+You are nimclaw, a helpful AI assistant.
 
 ## Current Time
 $1

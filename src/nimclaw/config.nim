@@ -112,7 +112,7 @@ proc defaultConfig*(): Config =
   result = Config(
     agents: AgentsConfig(
       defaults: AgentDefaults(
-        workspace: "~/.picoclaw/workspace",
+        workspace: "~/.nimclaw/workspace",
         model: "glm-4.7",
         provider: "zhipu",
         max_tokens: 8192,
@@ -139,9 +139,9 @@ proc defaultConfig*(): Config =
 
 proc parseEnv*(cfg: var Config) =
   # Simple manual environment variable parsing to match Go's env library
-  if existsEnv("PICOCLAW_AGENTS_DEFAULTS_WORKSPACE"): cfg.agents.defaults.workspace = getEnv("PICOCLAW_AGENTS_DEFAULTS_WORKSPACE")
-  if existsEnv("PICOCLAW_AGENTS_DEFAULTS_MODEL"): cfg.agents.defaults.model = getEnv("PICOCLAW_AGENTS_DEFAULTS_MODEL")
-  if existsEnv("PICOCLAW_AGENTS_DEFAULTS_PROVIDER"): cfg.agents.defaults.provider = getEnv("PICOCLAW_AGENTS_DEFAULTS_PROVIDER")
+  if existsEnv("NIMCLAW_AGENTS_DEFAULTS_WORKSPACE"): cfg.agents.defaults.workspace = getEnv("NIMCLAW_AGENTS_DEFAULTS_WORKSPACE")
+  if existsEnv("NIMCLAW_AGENTS_DEFAULTS_MODEL"): cfg.agents.defaults.model = getEnv("NIMCLAW_AGENTS_DEFAULTS_MODEL")
+  if existsEnv("NIMCLAW_AGENTS_DEFAULTS_PROVIDER"): cfg.agents.defaults.provider = getEnv("NIMCLAW_AGENTS_DEFAULTS_PROVIDER")
 
 proc loadConfig*(path: string): Config =
   result = defaultConfig()

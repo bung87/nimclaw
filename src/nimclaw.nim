@@ -10,14 +10,14 @@ const version = "0.1.0"
 const logo = "🦞"
 
 proc getConfigPath(): string =
-  getHomeDir() / ".picoclaw" / "config.json"
+  getHomeDir() / ".nimclaw" / "config.json"
 
 proc createWorkspaceTemplates(workspace: string) =
   let templates = {
     "AGENTS.md": "# Agent Instructions\nYou are a helpful AI assistant.\n",
-    "SOUL.md": "# Soul\nI am picoclaw.\n",
+    "SOUL.md": "# Soul\nI am nimclaw.\n",
     "USER.md": "# User\n",
-    "IDENTITY.md": "# Identity\nName: PicoClaw 🦞\n"
+    "IDENTITY.md": "# Identity\nName: Nimclaw 🦞\n"
   }.toTable
   for filename, content in templates:
     let filePath = workspace / filename
@@ -39,7 +39,7 @@ proc onboard() =
   createDir(workspace / "memory"); createDir(workspace / "skills")
   createDir(workspace / "sessions"); createDir(workspace / "cron")
   createWorkspaceTemplates(workspace)
-  echo logo, " picoclaw is ready!"
+  echo logo, " nimclaw is ready!"
 
 proc agent(message = "", session = "cli:default") =
   initLogger()
@@ -75,7 +75,7 @@ proc gateway() =
 
 proc status() =
   let configPath = getConfigPath()
-  echo logo, " picoclaw Status\nConfig: ", configPath, if fileExists(configPath): " ✓" else: " ✗"
+  echo logo, " nimclaw Status\nConfig: ", configPath, if fileExists(configPath): " ✓" else: " ✗"
 
 proc cron(list = false, add = false, remove = "", enable = "", disable = "",
           name = "", message = "", every = 0, at = 0.0, cron_expr = "",

@@ -246,7 +246,7 @@ proc renderHeader(app: TuiApp) =
 
   # Title with color
   app.tb.write(2, 0, "🦞 ", fgGreen)
-  app.tb.write(5, 0, "PicoClaw", fgGreen, {styleBright})
+  app.tb.write(5, 0, "Nimclaw", fgGreen, {styleBright})
 
   # Provider and model info (center-right)
   let infoText = provider & " / " & model

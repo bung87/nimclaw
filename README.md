@@ -5,7 +5,7 @@
 [![CI](https://github.com/bung87/nimclaw/actions/workflows/ci.yml/badge.svg)](https://github.com/bung87/nimclaw/actions/workflows/ci.yml)
 [![GitHub stars](https://img.shields.io/github/stars/bung87/nimclaw?style=social)](https://github.com/bung87/nimclaw/stargazers)
 
-Ultra-efficient AI assistant in Nim. A high-performance implementation inspired by PicoClaw.
+Ultra-efficient AI assistant in Nim. A high-performance implementation inspired by Nimclaw.
 
 ## Features
 - Independent implementations of all channels (Telegram, Discord, QQ, Feishu, DingTalk, WhatsApp, MaixCam).
@@ -39,7 +39,7 @@ nim c -d:release src/nimclaw.nim
 # 1. Initialize configuration
 ./nimclaw onboard
 
-# 2. Edit config at ~/.picoclaw/config.json
+# 2. Edit config at ~/.nimclaw/config.json
 #    Add your LLM API keys (OpenAI, Anthropic, OpenRouter, etc.)
 #    Enable desired channels (Telegram, Discord, etc.)
 
@@ -60,7 +60,7 @@ nim c -d:release src/nimclaw.nim
 
 ### Configuration
 
-Edit `~/.picoclaw/config.json`:
+Edit `~/.nimclaw/config.json`:
 
 ```json
 {
@@ -94,10 +94,10 @@ Skills are installed locally in your workspace:
 
 ```bash
 # Create skill directory
-mkdir -p ~/.picoclaw/workspace/skills/my_skill
+mkdir -p ~/.nimclaw/workspace/skills/my_skill
 
 # Add SKILL.md file
-cat > ~/.picoclaw/workspace/skills/my_skill/SKILL.md << 'EOF'
+cat > ~/.nimclaw/workspace/skills/my_skill/SKILL.md << 'EOF'
 ---
 name: my_skill
 description: My custom skill
@@ -114,7 +114,7 @@ EOF
 A skill is a directory containing a `SKILL.md` file:
 
 ```
-~/.picoclaw/workspace/skills/
+~/.nimclaw/workspace/skills/
 ├── my_skill/
 │   └── SKILL.md
 └── another_skill/
@@ -133,7 +133,7 @@ nimclaw includes example skills in the `skills/` directory:
 
 ```bash
 # Copy example skill to your workspace
-cp -r skills/example_skill ~/.picoclaw/workspace/skills/
+cp -r skills/example_skill ~/.nimclaw/workspace/skills/
 ```
 
 ### Using Skills
@@ -143,7 +143,7 @@ Once installed, skills are automatically loaded into the agent's context. The LL
 1. **Read skill files** using the `read_file` tool to access skill documentation
 2. **Use skill knowledge** to perform specialized tasks
 
-Skills are located at `~/.picoclaw/workspace/skills/{skill-name}/` and typically contain:
+Skills are located at `~/.nimclaw/workspace/skills/{skill-name}/` and typically contain:
 - `SKILL.md` - Main skill documentation and instructions
 - Additional files (templates, examples, etc.)
 

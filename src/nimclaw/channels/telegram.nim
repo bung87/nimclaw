@@ -107,7 +107,7 @@ proc downloadFile(c: TelegramChannel, fileID: string, ext: string): Future[strin
     await response.closeWait()
     response = nil
     if status == 200:
-      let mediaDir = getTempDir() / "picoclaw_media"
+      let mediaDir = getTempDir() / "nimclaw_media"
       if not dirExists(mediaDir): createDir(mediaDir)
       let localPath = mediaDir / (fileID[0..min(15, fileID.len-1)] & ext)
       writeFile(localPath, cast[string](bodyBytes))
