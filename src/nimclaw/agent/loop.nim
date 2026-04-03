@@ -1,6 +1,7 @@
 import chronos
 import std/[os, json, strutils, tables, locks, options]
-import ../bus, ../bus_types, ../config, ../logger, ../providers/types as providers_types, ../session, ../utils
+import ../bus, ../bus_types, ../config, ../logger, ../providers/types as providers_types,
+    ../providers/adapters as providers_adapters, ../session, ../utils
 import context as agent_context
 import ../tools/registry as tools_registry
 import ../tools/base as tools_base
@@ -161,6 +162,7 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
     seq[providers_types.Message])] {.async.} =
   var iteration = 0
   var finalContent = ""
+  var finalReasoning = ""
   var currentMessages = messages
 
   while iteration < al.maxIterations:
@@ -170,10 +172,26 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
     let response = await al.provider.chat(currentMessages, al.tools.getDefinitions(), al.model, initTable[string,
         JsonNode]())
 
+    # Accumulate reasoning across iterations
+    if response.reasoning.isSome and response.reasoning.get().len > 0:
+      if finalReasoning.len > 0:
+        finalReasoning.add("\n\n")
+      finalReasoning.add(response.reasoning.get())
+
     if response.tool_calls.len == 0:
-      finalContent = if response.content.isSome: response.content.get() else: ""
+      let respContent = if response.content.isSome: response.content.get() else: ""
+      if respContent.len > 0:
+        if finalContent.len > 0:
+          finalContent.add("\n\n")
+        finalContent.add(respContent)
       info "LLM response without tool calls", topic = "agent", iteration = $iteration
       break
+
+    # Surface assistant content even when tool calls are present
+    if response.content.isSome and response.content.get().len > 0:
+      if finalContent.len > 0:
+        finalContent.add("\n\n")
+      finalContent.add(response.content.get())
 
     var assistantMsg = providers_types.Message(
       role: mrAssistant,
@@ -206,7 +224,8 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
       finalContent = allToolErrors.join("\n")
       break
 
-  return (finalContent, iteration, currentMessages)
+  let resultContent = formatWithThinking(finalReasoning, finalContent)
+  return (resultContent, iteration, currentMessages)
 
 proc runAgentLoop*(al: AgentLoop, opts: ProcessOptions): Future[string] {.async.} =
   let history = al.sessions.getHistory(opts.sessionKey)

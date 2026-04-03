@@ -131,6 +131,12 @@ method normalizeResponse*(a: OpenAIAdapter, json: JsonNode): LLMResponse {.gcsaf
       if choice.hasKey("message") and choice["message"].kind == JObject:
         let msg = choice["message"]
 
+        # Extract reasoning_content if provided (OpenAI-compatible providers like OpenRouter)
+        if msg.hasKey("reasoning_content"):
+          let reasoning = msg["reasoning_content"].getStr("").strip()
+          if reasoning.len > 0:
+            resp.reasoning = some(reasoning)
+
         # Extract content (and handle <think> tags from reasoning models)
         var hasContent = false
         var contentStr = ""
@@ -231,6 +237,12 @@ method normalizeResponse*(a: OllamaAdapter, json: JsonNode): LLMResponse {.gcsaf
           if content.len > 0:
             resp.content = some(content)
 
+      # Fallback: some Ollama models (e.g., gemma4) return empty content but include reasoning
+      if msg.hasKey("reasoning"):
+        let reasoning = msg["reasoning"].getStr("").strip()
+        if reasoning.len > 0:
+          resp.reasoning = some(reasoning)
+
       # Extract tool_calls (standard format)
       if msg.hasKey("tool_calls") and msg["tool_calls"].kind == JArray:
         for tc in msg["tool_calls"]:
@@ -247,9 +259,9 @@ method normalizeResponse*(a: OllamaAdapter, json: JsonNode): LLMResponse {.gcsaf
           )
 
           let argsNode = fn.getOrDefault("arguments")
-          if argsNode.kind == JObject:
-            for k, v in argsNode:
-              toolCall.arguments[k] = v
+          let args = normalizeArguments(argsNode)
+          for k, v in args:
+            toolCall.arguments[k] = v
 
           resp.tool_calls.add(toolCall)
 

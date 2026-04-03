@@ -29,6 +29,7 @@ type
 
   LLMResponse* = object
     content*: Option[string]
+    reasoning*: Option[string]
     tool_calls*: seq[ToolCall]
     finish_reason*: string
     usage*: UsageInfo

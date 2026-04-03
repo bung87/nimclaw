@@ -96,47 +96,90 @@ proc updateVisualInput(app: TuiApp) =
     app.visualInput = res
     app.visualCursorX = cursorRunes - startRunePos
 
+proc runeDisplayWidth(r: Rune): int =
+  ## Approximate terminal display width for a rune.
+  ## Heuristic: CJK and emoji (outside BMP) are width 2.
+  let code = r.ord
+  if code <= 0x1F: return 0
+  if code >= 0x1100 and code <= 0x115F: return 2
+  if code >= 0x2E80 and code <= 0xA4CF: return 2
+  if code >= 0xAC00 and code <= 0xD7A3: return 2
+  if code >= 0xF900 and code <= 0xFAFF: return 2
+  if code >= 0xFE30 and code <= 0xFE6F: return 2
+  if code >= 0xFF00 and code <= 0xFF60: return 2
+  if code >= 0xFFE0 and code <= 0xFFE6: return 2
+  if code >= 0x20000 and code <= 0x2FFFF: return 2
+  if code >= 0x30000 and code <= 0x3FFFF: return 2
+  if code > 0xFFFF: return 2
+  return 1
+
+proc stringDisplayWidth(s: string): int =
+  result = 0
+  for r in s.runes:
+    result += runeDisplayWidth(r)
+
+proc drawTextWide*(text: string, x, y: int, fg, bg: uint32, style: uint16 = STYLE_NONE) =
+  ## Draw text accounting for wide characters (emojis, CJK).
+  let w = getTerminalWidth()
+  var currentX = x
+  if y < 0 or y >= getTerminalHeight():
+    return
+  for r in text.runes:
+    let rw = runeDisplayWidth(r)
+    if currentX >= 0 and currentX < w:
+      drawText(r.toUTF8(), currentX, y, fg, bg, style)
+    currentX += rw
+
 proc wrapText(text: string, maxWidth: int): seq[string] =
   ## Word wrap with fallback for no-space languages (e.g. CJK)
   result = @[]
-  var currentLine = ""
 
-  for word in text.split(' '):
-    if word.len == 0:
-      continue
-    if currentLine.len == 0:
-      currentLine = word
-    elif currentLine.runeLen + 1 + word.runeLen <= maxWidth:
-      currentLine.add(" " & word)
-    else:
-      result.add(currentLine)
-      currentLine = word
+  for rawLine in text.splitLines():
+    var currentLine = ""
+    var currentWidth = 0
+    var lineResult: seq[string] = @[]
 
-  if currentLine.len > 0:
-    result.add(currentLine)
+    for word in rawLine.split(' '):
+      let wordWidth = stringDisplayWidth(word)
+      if word.len == 0:
+        continue
+      if currentLine.len == 0:
+        currentLine = word
+        currentWidth = wordWidth
+      elif currentWidth + 1 + wordWidth <= maxWidth:
+        currentLine.add(" " & word)
+        currentWidth += 1 + wordWidth
+      else:
+        lineResult.add(currentLine)
+        currentLine = word
+        currentWidth = wordWidth
 
-  # Handle lines that are still too long
-  var finalResult: seq[string] = @[]
-  for line in result:
-    if line.runeLen <= maxWidth:
-      finalResult.add(line)
-    else:
-      var current = ""
-      var currentRunes = 0
-      for r in line.runes:
-        if currentRunes >= maxWidth:
-          finalResult.add(current)
-          current = r.toUTF8
-          currentRunes = 1
-        else:
-          current.add(r.toUTF8)
-          currentRunes.inc
-      if current.len > 0:
-        finalResult.add(current)
+    if currentLine.len > 0:
+      lineResult.add(currentLine)
+    elif rawLine.len == 0:
+      lineResult.add("")
 
-  if finalResult.len == 0:
-    finalResult.add("")
-  result = finalResult
+    # Handle lines that are still too long
+    for line in lineResult:
+      if stringDisplayWidth(line) <= maxWidth:
+        result.add(line)
+      else:
+        var current = ""
+        var currentWidth = 0
+        for r in line.runes:
+          let rw = runeDisplayWidth(r)
+          if currentWidth + rw > maxWidth:
+            result.add(current)
+            current = r.toUTF8
+            currentWidth = rw
+          else:
+            current.add(r.toUTF8)
+            currentWidth += rw
+        if current.len > 0:
+          result.add(current)
+
+  if result.len == 0:
+    result.add("")
 
 proc addMessage(app: TuiApp, role, content: string, toolCalls: seq[providers_types.ToolCall] = @[]) =
   app.messages.add(ChatMessage(
@@ -362,20 +405,20 @@ proc renderHeader(app: TuiApp) =
   let model = app.cfg.agents.defaults.model
 
   # Title with color
-  drawText("🦞 ", 2, 0, FG_COLOR_GREEN, BG_COLOR_DEFAULT, STYLE_BOLD)
-  drawText("Nimclaw", 5, 0, FG_COLOR_GREEN, BG_COLOR_DEFAULT, STYLE_BOLD)
+  drawTextWide("🦞 ", 2, 0, FG_COLOR_GREEN, BG_COLOR_DEFAULT, STYLE_BOLD)
+  drawTextWide("Nimclaw", 5, 0, FG_COLOR_GREEN, BG_COLOR_DEFAULT, STYLE_BOLD)
 
   # Provider and model info (center-right)
   let infoText = provider & " / " & model
-  let infoX = w - infoText.runeLen - 15
+  let infoX = w - stringDisplayWidth(infoText) - 15
   if infoX > 20:
-    drawText(infoText, infoX, 0, FG_COLOR_CYAN, BG_COLOR_DEFAULT, STYLE_NONE)
+    drawTextWide(infoText, infoX, 0, FG_COLOR_CYAN, BG_COLOR_DEFAULT, STYLE_NONE)
 
   # Status (rightmost)
   if app.isGenerating:
-    drawText("●", w - 3, 0, FG_COLOR_YELLOW, BG_COLOR_DEFAULT, STYLE_NONE)
+    drawTextWide("●", w - 3, 0, FG_COLOR_YELLOW, BG_COLOR_DEFAULT, STYLE_NONE)
   else:
-    drawText("○", w - 3, 0, FG_COLOR_GREEN, BG_COLOR_DEFAULT, STYLE_NONE)
+    drawTextWide("○", w - 3, 0, FG_COLOR_GREEN, BG_COLOR_DEFAULT, STYLE_NONE)
 
   # Separator line (dim)
   drawRectangle(0, 1, w, 2, BG_COLOR_DEFAULT, FG_COLOR_DEFAULT, "─", STYLE_FAINT)
@@ -420,7 +463,7 @@ proc renderChat(app: TuiApp) =
   # Draw Ctrl+D hint at the bottom of chat area if visible
   if app.ctrlDHintVisible and currentY >= startY:
     let hint = "⚠ Press Ctrl+D again to exit"
-    drawText(hint, 2, currentY, FG_COLOR_YELLOW, BG_COLOR_DEFAULT, STYLE_FAINT)
+    drawTextWide(hint, 2, currentY, FG_COLOR_YELLOW, BG_COLOR_DEFAULT, STYLE_FAINT)
     currentY.dec
 
   let startIdx = max(0, displayLines.len - h - app.scrollOffset)
@@ -439,7 +482,7 @@ proc renderChat(app: TuiApp) =
       of "assistant": fg = FG_COLOR_GREEN
       of "system": fg = FG_COLOR_YELLOW
       of "tool": fg = FG_COLOR_MAGENTA
-      drawText(text, indent, currentY, fg, BG_COLOR_DEFAULT, STYLE_NONE)
+      drawTextWide(text, indent, currentY, fg, BG_COLOR_DEFAULT, STYLE_NONE)
 
     currentY.dec
 
@@ -452,14 +495,14 @@ proc renderInput(app: TuiApp) =
   drawRectangle(0, h - 3, w, h - 2, BG_COLOR_DEFAULT, FG_COLOR_DEFAULT, "─", STYLE_FAINT)
 
   # Input prompt
-  drawText("🦞", 2, inputY, FG_COLOR_CYAN, BG_COLOR_DEFAULT, STYLE_NONE)
+  drawTextWide("🦞", 2, inputY, FG_COLOR_CYAN, BG_COLOR_DEFAULT, STYLE_NONE)
 
   # Visible input text
   let inputLines = app.visualInput.splitLines()
   for i, line in inputLines:
     let y = inputY + i
     if y < h - 1:
-      drawText(line, InputStartX, y, FG_COLOR_DEFAULT, BG_COLOR_DEFAULT, STYLE_NONE)
+      drawTextWide(line, InputStartX, y, FG_COLOR_DEFAULT, BG_COLOR_DEFAULT, STYLE_NONE)
 
 proc positionCursor(app: TuiApp) =
   let w = getTerminalWidth()
