@@ -5,6 +5,7 @@ import chronos
 import ../providers/types as providers_types
 import ../agent/loop
 import ../config
+import markdown_rendering
 
 type
   DisplayLine* = object
@@ -287,6 +288,7 @@ proc getRolePrefix(role: string): string =
 
 proc updateCachedMessage(app: TuiApp, msgIdx: int) =
   ## Update cached display lines for a single message (incremental)
+  ## Now with markdown rendering support
   if msgIdx >= app.messages.len:
     return
 
@@ -303,7 +305,6 @@ proc updateCachedMessage(app: TuiApp, msgIdx: int) =
     while app.cachedMessages.len <= msgIdx:
       app.cachedMessages.add(CachedMessage())
 
-  # Re-wrap the message content
   let maxContentWidth = app.chatWidth() - 12
   var wrappedLines: seq[DisplayLine] = @[]
 
@@ -319,9 +320,20 @@ proc updateCachedMessage(app: TuiApp, msgIdx: int) =
     role: msg.role
   ))
 
-  # Add content lines
-  let contentLines = wrapTextToLines(msg.content, maxContentWidth, msg.role, 6)
-  wrappedLines.add(contentLines)
+  # Parse and render markdown content
+  if msg.content.len > 0:
+    let parsed = markdown_rendering.parseMarkdown(msg.content)
+    let mdLines = markdown_rendering.renderToTerminalLines(parsed, maxContentWidth - 6, 6)
+
+    for line in mdLines:
+      wrappedLines.add(DisplayLine(
+        text: line.text,
+        fgColor: line.fg,
+        bgColor: line.bg,
+        style: line.style,
+        indent: line.indent,
+        role: msg.role
+      ))
 
   # Add empty line after message
   wrappedLines.add(DisplayLine(
