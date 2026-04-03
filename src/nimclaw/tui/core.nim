@@ -685,9 +685,9 @@ proc renderChatIncremental(app: TuiApp) =
   let startY = HeaderHeight + 1
   let maxContentWidth = w - 12
 
-  # Clear chat area only on full redraw
-  if app.needsFullRedraw:
-    removeArea(0, startY, w, startY + h)
+  # Clear chat area to prevent artifacts from previous renders
+  # This is necessary because content length can change during streaming
+  removeArea(0, startY, w, startY + h)
 
   # Build/update cache for all visible messages
   var totalHeight = 0
