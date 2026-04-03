@@ -158,12 +158,24 @@ proc maybeSummarize(al: AgentLoop, sessionKey: string) =
   else:
     release(al.summarizingLock)
 
-proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts: ProcessOptions): Future[(string, int,
+type
+  ContentUpdateCallback* = proc(content: string, reasoning: string, isDone: bool) {.gcsafe.}
+
+proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts: ProcessOptions,
+    onUpdate: ContentUpdateCallback = nil): Future[(string, int,
     seq[providers_types.Message])] {.async.} =
   var iteration = 0
-  var finalContent = ""
-  var finalReasoning = ""
+  var accumulatedContent = ""
+  var accumulatedReasoning = ""
   var currentMessages = messages
+
+  proc notifyUpdate(isDone: bool = false) {.raises: [].} =
+    if onUpdate != nil:
+      try:
+        let content = formatWithThinking(accumulatedReasoning, accumulatedContent)
+        onUpdate(content, accumulatedReasoning, isDone)
+      except:
+        discard
 
   while iteration < al.maxIterations:
     iteration += 1
@@ -174,24 +186,27 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
 
     # Accumulate reasoning across iterations
     if response.reasoning.isSome and response.reasoning.get().len > 0:
-      if finalReasoning.len > 0:
-        finalReasoning.add("\n\n")
-      finalReasoning.add(response.reasoning.get())
+      if accumulatedReasoning.len > 0:
+        accumulatedReasoning.add("\n\n")
+      accumulatedReasoning.add(response.reasoning.get())
 
     if response.tool_calls.len == 0:
       let respContent = if response.content.isSome: response.content.get() else: ""
       if respContent.len > 0:
-        if finalContent.len > 0:
-          finalContent.add("\n\n")
-        finalContent.add(respContent)
+        if accumulatedContent.len > 0:
+          accumulatedContent.add("\n\n")
+        accumulatedContent.add(respContent)
       info "LLM response without tool calls", topic = "agent", iteration = $iteration
+      notifyUpdate(isDone = true)
       break
 
     # Surface assistant content even when tool calls are present
     if response.content.isSome and response.content.get().len > 0:
-      if finalContent.len > 0:
-        finalContent.add("\n\n")
-      finalContent.add(response.content.get())
+      if accumulatedContent.len > 0:
+        accumulatedContent.add("\n\n")
+      accumulatedContent.add(response.content.get())
+
+    notifyUpdate(isDone = false)
 
     var assistantMsg = providers_types.Message(
       role: mrAssistant,
@@ -221,10 +236,11 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
 
     # If all tools failed, return error directly to user
     if allToolErrors.len > 0 and allToolErrors.len == response.tool_calls.len:
-      finalContent = allToolErrors.join("\n")
+      accumulatedContent = allToolErrors.join("\n")
+      notifyUpdate(isDone = true)
       break
 
-  let resultContent = formatWithThinking(finalReasoning, finalContent)
+  let resultContent = formatWithThinking(accumulatedReasoning, accumulatedContent)
   return (resultContent, iteration, currentMessages)
 
 proc runAgentLoop*(al: AgentLoop, opts: ProcessOptions): Future[string] {.async.} =
@@ -238,24 +254,24 @@ proc runAgentLoop*(al: AgentLoop, opts: ProcessOptions): Future[string] {.async.
 
   al.sessions.addMessage(opts.sessionKey, "user", opts.userMessage)
 
-  let (finalContentRaw, iteration, _) = await al.runLLMIteration(messages, opts)
-  var finalContent = finalContentRaw
+  let (responseContent, iteration, _) = await al.runLLMIteration(messages, opts)
+  var resultContent = responseContent
 
-  if finalContent == "":
-    finalContent = opts.defaultResponse
+  if resultContent == "":
+    resultContent = opts.defaultResponse
 
-  al.sessions.addMessage(opts.sessionKey, "assistant", finalContent)
+  al.sessions.addMessage(opts.sessionKey, "assistant", resultContent)
   al.sessions.save(al.sessions.getOrCreate(opts.sessionKey))
 
   if opts.enableSummary:
     al.maybeSummarize(opts.sessionKey)
 
   if opts.sendResponse:
-    al.bus.publishOutbound(OutboundMessage(channel: opts.channel, chat_id: opts.chatID, content: finalContent))
+    al.bus.publishOutbound(OutboundMessage(channel: opts.channel, chat_id: opts.chatID, content: resultContent))
 
-  info "Response", topic = "agent", content = truncate(finalContent, 120), session_key = opts.sessionKey,
+  info "Response", topic = "agent", content = truncate(resultContent, 120), session_key = opts.sessionKey,
       iterations = $iteration
-  return finalContent
+  return resultContent
 
 proc processMessage*(al: AgentLoop, msg: InboundMessage): Future[string] {.async.} =
   info "Processing message", topic = "agent", channel = msg.channel, sender = msg.sender_id,
@@ -289,10 +305,42 @@ proc processMessage*(al: AgentLoop, msg: InboundMessage): Future[string] {.async
     sendResponse: false
   ))
 
-proc processDirect*(al: AgentLoop, content, sessionKey: string): Future[string] {.async.} =
-  let msg = InboundMessage(channel: "cli", sender_id: "user", chat_id: "direct", content: content,
-      session_key: sessionKey)
-  return await al.processMessage(msg)
+proc processDirect*(al: AgentLoop, content, sessionKey: string,
+    onUpdate: ContentUpdateCallback = nil): Future[string] {.async.} =
+  let history = al.sessions.getHistory(sessionKey)
+  let summary = al.sessions.getSummary(sessionKey)
+  var messages: seq[providers_types.Message] = @[]
+  try:
+    messages = al.contextBuilder.buildMessages(history, summary, content, "cli", "direct")
+  except CatchableError as e:
+    error "Failed to build messages", topic = "agent", error = e.msg
+
+  al.sessions.addMessage(sessionKey, "user", content)
+
+  let opts = ProcessOptions(
+    sessionKey: sessionKey,
+    channel: "cli",
+    chatID: "direct",
+    userMessage: content,
+    defaultResponse: "I have no response to give.",
+    enableSummary: true,
+    sendResponse: false
+  )
+  let (resultContent, iteration, _) = await al.runLLMIteration(messages, opts, onUpdate)
+  var responseContent = resultContent
+
+  if responseContent == "":
+    responseContent = opts.defaultResponse
+
+  al.sessions.addMessage(sessionKey, "assistant", responseContent)
+  al.sessions.save(al.sessions.getOrCreate(sessionKey))
+
+  if opts.enableSummary:
+    al.maybeSummarize(sessionKey)
+
+  info "Response", topic = "agent", content = truncate(responseContent, 120), session_key = sessionKey,
+      iterations = $iteration
+  return responseContent
 
 proc run*(al: AgentLoop) {.async.} =
   al.running = true

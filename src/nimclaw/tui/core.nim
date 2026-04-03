@@ -206,9 +206,22 @@ proc sendMessage(app: TuiApp) {.async.} =
   app.isGenerating = true
   app.needsRedraw = true
 
-  let response = await app.agentLoop.processDirect(userInput, "tui:default")
+  # Add placeholder message for assistant that will be updated incrementally
+  let assistantMsgIdx = app.messages.len
+  app.addMessage("assistant", "")
 
-  app.addMessage("assistant", response)
+  # Create callback for incremental updates
+  let onUpdate = proc(content: string, reasoning: string, isDone: bool) {.gcsafe.} =
+    {.gcsafe.}:
+      if assistantMsgIdx < app.messages.len:
+        app.messages[assistantMsgIdx].content = content
+        app.needsRedraw = true
+
+  let response = await app.agentLoop.processDirect(userInput, "tui:default", onUpdate)
+
+  # Ensure final content is set
+  if assistantMsgIdx < app.messages.len:
+    app.messages[assistantMsgIdx].content = response
   app.isGenerating = false
   app.needsRedraw = true
 
