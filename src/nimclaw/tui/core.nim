@@ -790,6 +790,9 @@ proc renderInput(app: TuiApp) =
   let h = getTerminalHeight()
   let inputY = h - 2
 
+  # Clear input area first to prevent ghost characters
+  removeArea(0, inputY, w, inputY + 1)
+
   # Separator line (dim)
   drawRectangle(0, h - 3, w, h - 2, BG_COLOR_DEFAULT, FG_COLOR_DEFAULT, "─", STYLE_FAINT)
 
