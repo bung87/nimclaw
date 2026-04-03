@@ -60,6 +60,15 @@ nim c -d:release src/nimclaw.nim
 | `agent [message]` | Run interactive agent or single query |
 | `gateway` | Start message gateway with all channels |
 
+#### TUI Mode Commands
+
+When running in interactive TUI mode (without a message argument), the following commands are available:
+
+| Command | Description |
+|---------|-------------|
+| `/new` | Create a new session (clears conversation history) |
+| `quit`, `exit`, `q` | Exit the application |
+
 ### Configuration
 
 Edit `~/.nimclaw/config.json`:
