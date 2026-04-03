@@ -491,6 +491,43 @@ const
   ListBullet* = "• "
   ListNumberWidth* = 4
 
+type
+  StyledSegment = object
+    text: string
+    style: uint16
+    fg: uint32
+
+proc wrapStyledSegments(segments: seq[StyledSegment], maxWidth, baseIndent: int): seq[tuple[text: string, fg,
+    bg: uint32, style: uint16, indent: int]] =
+  ## Word wrap styled segments while preserving styles
+  result = @[]
+
+  var currentLine = ""
+  var currentStyle = STYLE_NONE
+
+  for segment in segments:
+    let words = segment.text.split(' ')
+    for word in words:
+      if word.len == 0:
+        continue
+
+      # Check if we need to start a new line
+      if currentLine.len > 0 and currentLine.len + 1 + word.len > maxWidth - baseIndent:
+        # Flush current line with its style
+        result.add((currentLine, FG_COLOR_DEFAULT, BG_COLOR_DEFAULT, currentStyle, baseIndent))
+        currentLine = ""
+
+      # Add word to current line
+      if currentLine.len == 0:
+        currentLine = word
+        currentStyle = segment.style
+      else:
+        currentLine.add(" " & word)
+
+  # Flush remaining line
+  if currentLine.len > 0:
+    result.add((currentLine, FG_COLOR_DEFAULT, BG_COLOR_DEFAULT, currentStyle, baseIndent))
+
 proc renderToTerminalLines*(parsed: ParsedMarkdown, maxWidth: int, baseIndent: int = 0): seq[tuple[text: string, fg,
     bg: uint32, style: uint16, indent: int]] =
   ## Render parsed markdown to terminal display lines
@@ -500,42 +537,30 @@ proc renderToTerminalLines*(parsed: ParsedMarkdown, maxWidth: int, baseIndent: i
     case elem.kind
     of mdParagraph:
       if elem.children.len > 0:
-        # Render inline elements
-        var lineText = ""
+        # Convert inline elements to styled segments
+        var segments: seq[StyledSegment] = @[]
         for child in elem.children:
           case child.kind
           of mdText:
-            lineText.add(child.content)
+            segments.add(StyledSegment(text: child.content, style: STYLE_NONE, fg: FG_COLOR_DEFAULT))
           of mdStrong:
-            lineText.add(child.content)
+            segments.add(StyledSegment(text: child.content, style: STYLE_BOLD, fg: FG_COLOR_DEFAULT))
           of mdEmphasis:
-            lineText.add(child.content)
+            segments.add(StyledSegment(text: child.content, style: STYLE_ITALIC, fg: FG_COLOR_DEFAULT))
           of mdInlineCode:
-            lineText.add(child.content)
+            segments.add(StyledSegment(text: child.content, style: STYLE_NONE, fg: CodeFg))
           of mdLink:
-            lineText.add(child.content & " (" & child.url & ")")
+            segments.add(StyledSegment(text: child.content & " (" & child.url & ")", style: STYLE_NONE, fg: LinkFg))
           of mdStrikethrough:
-            lineText.add(child.content)
+            segments.add(StyledSegment(text: child.content, style: STYLE_FAINT, fg: FG_COLOR_DEFAULT))
           else:
-            lineText.add(child.content)
+            segments.add(StyledSegment(text: child.content, style: STYLE_NONE, fg: FG_COLOR_DEFAULT))
 
-        # Word wrap the paragraph
-        var currentLine = ""
-        for word in lineText.split(' '):
-          if word.len == 0:
-            continue
-          if currentLine.len == 0:
-            currentLine = word
-          elif currentLine.len + 1 + word.len <= maxWidth - baseIndent:
-            currentLine.add(" " & word)
-          else:
-            result.add((currentLine, FG_COLOR_DEFAULT, BG_COLOR_DEFAULT, STYLE_NONE, baseIndent))
-            currentLine = word
-
-        if currentLine.len > 0:
-          result.add((currentLine, FG_COLOR_DEFAULT, BG_COLOR_DEFAULT, STYLE_NONE, baseIndent))
+        # Word wrap with style preservation
+        let wrapped = wrapStyledSegments(segments, maxWidth, baseIndent)
+        result.add(wrapped)
       else:
-        # Simple paragraph
+        # Simple paragraph without inline elements
         var currentLine = ""
         for word in elem.content.split(' '):
           if word.len == 0:
