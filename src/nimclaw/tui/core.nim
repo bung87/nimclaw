@@ -78,9 +78,20 @@ proc deinitTextalotGcsafe() =
     deinitTextalot()
 
 proc hashContent(content: string): string =
-  ## Simple hash for change detection
-  $content.len & "_" & (if content.len > 0: $content[0] else: "") & "_" &
-  (if content.len > 0: $content[^1] else: "")
+  ## Better hash for change detection using checksum
+  if content.len == 0:
+    return "0"
+
+  # Simple but effective hash: combine length with sum of bytes
+  var sum = content.len.uint32
+  for i in 0..<min(content.len, 1000): # Sample first 1000 chars
+    sum = sum * 31 + content[i].uint32
+
+  # Also sample from end
+  for i in max(0, content.len - 100)..<content.len:
+    sum = sum * 31 + content[i].uint32
+
+  result = $content.len & "_" & $sum
 
 proc newTuiApp*(agentLoop: AgentLoop, cfg: Config): TuiApp =
   initTextalot()
