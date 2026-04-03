@@ -1,9 +1,9 @@
 ## Markdown Rendering for Nimclaw TUI
 ## 
 ## This module provides markdown parsing and terminal rendering for LLM responses.
-## It uses nim-markdown for parsing and provides terminal-friendly rendering.
+## Uses simple string parsing (no regex) for speed and compatibility.
 
-import std/[strutils, re]
+import std/strutils
 import textalot
 
 type
@@ -20,7 +20,6 @@ type
     mdStrikethrough  # ~~strike~~
     mdLink           # [text](url)
     mdImage          # ![alt](url)
-    mdTable          # | col | col |
     mdHorizontalRule # ---
     mdLineBreak      # <br> or two spaces
     mdParagraph      # Paragraph block
@@ -38,53 +37,75 @@ type
     elements*: seq[MdElement]
     rawText*: string
 
-# Regex patterns for markdown elements
-let
-  codeBlockPattern = re"```(\\w*)\\n?((?s:.*?))```"
-  inlineCodePattern = re"`([^`]+)`"
-  headingPattern = re"^(#{1,6})\\s+(.+)$"
-  blockQuotePattern = re"^>\\s?(.+)$"
-  unorderedListPattern = re"^\\s*[-*+]\\s+(.+)$"
-  orderedListPattern = re"^\\s*(\\d+)\\.\\s+(.+)$"
-  boldPattern = re"\\*\\*([^*]+)\\*\\*"
-  italicPattern = re"\\*([^*]+)\\*"
-  strikethroughPattern = re"~~([^~]+)~~"
-  linkPattern = re"\\[([^\\]]+)\\]\\(([^)]+)\\)"
-  imagePattern = re"!\\[([^\\]]*)\\]\\(([^)]+)\\)"
-  hrPattern = re"^(---|\\*\\*\\*|___)\\s*$"
-
 proc detectLanguageFromContent(content: string): string =
   ## Try to detect language from code content
-  if content.startsWith("proc ") or content.startsWith("func ") or
-     content.startsWith("import ") or content.startsWith("type "):
+  let trimmed = content.strip()
+  if trimmed.len == 0:
+    return ""
+  if trimmed.startsWith("proc ") or trimmed.startsWith("func ") or
+     trimmed.startsWith("import ") or trimmed.startsWith("type ") or
+     trimmed.startsWith("var ") or trimmed.startsWith("let ") or
+     trimmed.startsWith("const ") or trimmed.startsWith("echo "):
     return "nim"
-  if content.startsWith("def ") or content.startsWith("class ") or
-     content.startsWith("import "):
+  if trimmed.startsWith("def ") or trimmed.startsWith("class ") or
+     trimmed.startsWith("import ") or trimmed.startsWith("print("):
     return "python"
-  if content.startsWith("function ") or content.startsWith("const ") or
-     content.startsWith("let ") or content.startsWith("var "):
+  if trimmed.startsWith("function ") or trimmed.startsWith("const ") or
+     trimmed.startsWith("let ") or trimmed.startsWith("var ") or
+     trimmed.startsWith("console.log"):
     return "javascript"
-  if content.startsWith("{") and content.contains("\""):
+  if trimmed.startsWith("{") and trimmed.contains("\""):
     return "json"
+  if trimmed.startsWith("<") and trimmed.contains(">"):
+    return "html"
   return ""
 
-proc extractCodeBlocks*(text: string): seq[tuple[language, content: string, start, stop: int]] =
-  ## Extract code blocks from markdown text
-  result = @[]
-  var matches: array[3, string]
-  var start = 0
+proc extractCodeBlock(text: string, start: int): tuple[language, content: string, nextPos: int] =
+  ## Extract a code block starting at position start
+  ## Returns (language, content, position after block)
+  result.language = ""
+  result.content = ""
+  result.nextPos = start
 
-  while start < text.len:
-    let (first, last) = findBounds(text, codeBlockPattern, matches, start)
-    if first == -1:
-      break
+  if start + 3 > text.len:
+    return
 
-    let lang = matches[0].toLowerAscii()
-    let content = matches[1]
-    result.add((lang, content, first, last))
-    start = last + 1
+  # Check for opening ```
+  if text[start..<start+3] != "```":
+    return
 
-proc parseInlineElements*(text: string): seq[MdElement] =
+  # Find language identifier (on same line as opening ```)
+  var pos = start + 3
+  var langEnd = pos
+  while langEnd < text.len and text[langEnd] notin {'\n', '\r'}:
+    langEnd.inc
+  result.language = text[pos..<langEnd].strip().toLowerAscii()
+
+  # Skip to after opening fence
+  pos = langEnd
+  if pos < text.len and text[pos] == '\r': pos.inc
+  if pos < text.len and text[pos] == '\n': pos.inc
+
+  # Find closing ```
+  let contentStart = pos
+  while pos < text.len - 2:
+    if text[pos..<pos+3] == "```":
+      # Found closing fence
+      result.content = text[contentStart..<pos]
+      result.nextPos = pos + 3
+      # Auto-detect language if not specified
+      if result.language.len == 0:
+        result.language = detectLanguageFromContent(result.content)
+      return
+    pos.inc
+
+  # No closing fence found - treat rest as code
+  result.content = text[contentStart..^1]
+  result.nextPos = text.len
+  if result.language.len == 0:
+    result.language = detectLanguageFromContent(result.content)
+
+proc parseInlineElements(text: string): seq[MdElement] =
   ## Parse inline markdown elements (bold, italic, code, links)
   result = @[]
 
@@ -97,174 +118,151 @@ proc parseInlineElements*(text: string): seq[MdElement] =
       currentText = ""
 
   while pos < text.len:
-    var foundMatch = false
-
-    # Check for inline code (highest priority)
-    var matches: array[1, string]
-    let (first, last) = findBounds(text, inlineCodePattern, matches, pos, pos + 20)
-    if first != -1:
-      flushText()
-      result.add(MdElement(kind: mdInlineCode, content: matches[0]))
-      pos = last + 1
-      foundMatch = true
-
-    # Check for bold
-    if not foundMatch:
-      var boldMatches: array[1, string]
-      let (boldFirst, boldLast) = findBounds(text, boldPattern, boldMatches, pos, pos + 30)
-      if boldFirst != -1:
+    # Check for inline code `...`
+    if pos < text.len and text[pos] == '`':
+      let codeStart = pos + 1
+      var codeEnd = codeStart
+      while codeEnd < text.len and text[codeEnd] != '`':
+        codeEnd.inc
+      if codeEnd < text.len:
         flushText()
-        result.add(MdElement(kind: mdStrong, content: boldMatches[0]))
-        pos = boldLast + 1
-        foundMatch = true
+        result.add(MdElement(kind: mdInlineCode, content: text[codeStart..<codeEnd]))
+        pos = codeEnd + 1
+        continue
 
-    # Check for italic (but not bold)
-    if not foundMatch:
-      var italicMatches: array[1, string]
-      let (italicFirst, italicLast) = findBounds(text, italicPattern, italicMatches, pos, pos + 30)
-      if italicFirst != -1:
+    # Check for bold **...**
+    if pos + 1 < text.len and text[pos..<pos+2] == "**":
+      let contentStart = pos + 2
+      var contentEnd = contentStart
+      while contentEnd + 1 < text.len and text[contentEnd..<contentEnd+2] != "**":
+        contentEnd.inc
+      if contentEnd + 1 < text.len:
         flushText()
-        result.add(MdElement(kind: mdEmphasis, content: italicMatches[0]))
-        pos = italicLast + 1
-        foundMatch = true
+        result.add(MdElement(kind: mdStrong, content: text[contentStart..<contentEnd]))
+        pos = contentEnd + 2
+        continue
 
-    # Check for links
-    if not foundMatch:
-      var linkMatches: array[2, string]
-      let (linkFirst, linkLast) = findBounds(text, linkPattern, linkMatches, pos, pos + 100)
-      if linkFirst != -1:
+    # Check for italic *...* (but not **)
+    if pos < text.len and text[pos] == '*' and (pos + 1 >= text.len or text[pos+1] != '*'):
+      let contentStart = pos + 1
+      var contentEnd = contentStart
+      while contentEnd < text.len and text[contentEnd] != '*':
+        contentEnd.inc
+      if contentEnd < text.len:
         flushText()
-        result.add(MdElement(kind: mdLink, content: linkMatches[0], url: linkMatches[1]))
-        pos = linkLast + 1
-        foundMatch = true
+        result.add(MdElement(kind: mdEmphasis, content: text[contentStart..<contentEnd]))
+        pos = contentEnd + 1
+        continue
 
-    # Check for strikethrough
-    if not foundMatch:
-      var strikeMatches: array[1, string]
-      let (strikeFirst, strikeLast) = findBounds(text, strikethroughPattern, strikeMatches, pos, pos + 30)
-      if strikeFirst != -1:
+    # Check for strikethrough ~~...~~
+    if pos + 1 < text.len and text[pos..<pos+2] == "~~":
+      let contentStart = pos + 2
+      var contentEnd = contentStart
+      while contentEnd + 1 < text.len and text[contentEnd..<contentEnd+2] != "~~":
+        contentEnd.inc
+      if contentEnd + 1 < text.len:
         flushText()
-        result.add(MdElement(kind: mdStrikethrough, content: strikeMatches[0]))
-        pos = strikeLast + 1
-        foundMatch = true
+        result.add(MdElement(kind: mdStrikethrough, content: text[contentStart..<contentEnd]))
+        pos = contentEnd + 2
+        continue
 
-    if not foundMatch:
-      currentText.add(text[pos])
-      pos += 1
+    # Check for links [text](url)
+    if pos < text.len and text[pos] == '[':
+      var textEnd = pos + 1
+      while textEnd < text.len and text[textEnd] != ']':
+        textEnd.inc
+      if textEnd + 1 < text.len and text[textEnd + 1] == '(':
+        var urlEnd = textEnd + 2
+        while urlEnd < text.len and text[urlEnd] != ')':
+          urlEnd.inc
+        if urlEnd < text.len:
+          flushText()
+          result.add(MdElement(kind: mdLink,
+            content: text[pos+1..<textEnd],
+            url: text[textEnd+2..<urlEnd]))
+          pos = urlEnd + 1
+          continue
+
+    # Regular character
+    currentText.add(text[pos])
+    pos.inc
 
   flushText()
 
-proc parseBlockElements*(text: string): seq[MdElement] =
-  ## Parse block-level elements (paragraphs, lists, headings)
-  result = @[]
+proc isHeadingLine(line: string): tuple[isHeading: bool, level: int, content: string] =
+  ## Check if a line is a markdown heading
+  result.isHeading = false
+  result.level = 0
+  result.content = ""
 
-  var lines = text.splitLines()
-  var i = 0
-  var currentParagraph = ""
+  var pos = 0
+  while pos < line.len and line[pos] == '#' and pos < 6:
+    pos.inc
 
-  template flushParagraph() =
-    if currentParagraph.len > 0:
-      let inlineElements = parseInlineElements(currentParagraph.strip())
-      # If only one text element, flatten it
-      if inlineElements.len == 1 and inlineElements[0].kind == mdText:
-        result.add(MdElement(kind: mdParagraph, content: inlineElements[0].content))
-      else:
-        result.add(MdElement(kind: mdParagraph, content: "", children: inlineElements))
-      currentParagraph = ""
+  if pos > 0 and pos < line.len and line[pos] == ' ':
+    result.isHeading = true
+    result.level = pos
+    result.content = line[pos+1..^1].strip()
 
-  while i < lines.len:
-    let line = lines[i]
+proc stripLeadingSpaces(s: string): string =
+  ## Strip leading whitespace from a string
+  var pos = 0
+  while pos < s.len and s[pos] in {' ', '\t'}:
+    pos.inc
+  result = s[pos..^1]
 
-    # Check for horizontal rule
-    var hrMatches: array[0, string]
-    if line.match(hrPattern, hrMatches):
-      flushParagraph()
-      result.add(MdElement(kind: mdHorizontalRule))
-      i += 1
-      continue
+proc isUnorderedListItem(line: string): tuple[isItem: bool, content: string] =
+  ## Check if line is an unordered list item (-, *, +)
+  result.isItem = false
+  result.content = ""
 
-    # Check for headings
-    var headingMatches: array[2, string]
-    if line.match(headingPattern, headingMatches):
-      flushParagraph()
-      let level = headingMatches[0].len
-      result.add(MdElement(
-        kind: mdHeading,
-        level: level,
-        content: headingMatches[1]
-      ))
-      i += 1
-      continue
+  let stripped = line.stripLeadingSpaces()
+  if stripped.len >= 2 and stripped[0] in {'-', '*', '+'} and stripped[1] == ' ':
+    result.isItem = true
+    result.content = stripped[2..^1].strip()
 
-    # Check for blockquotes
-    var quoteMatches: array[1, string]
-    if line.match(blockQuotePattern, quoteMatches):
-      flushParagraph()
-      var quoteLines: seq[string] = @[quoteMatches[0]]
-      i += 1
-      # Collect consecutive quote lines
-      while i < lines.len:
-        var nextQuoteMatch: array[1, string]
-        if lines[i].match(blockQuotePattern, nextQuoteMatch):
-          quoteLines.add(nextQuoteMatch[0])
-          i += 1
-        else:
-          break
-      result.add(MdElement(
-        kind: mdBlockQuote,
-        content: quoteLines.join("\n")
-      ))
-      continue
+proc isOrderedListItem(line: string): tuple[isItem: bool, num: int, content: string] =
+  ## Check if line is an ordered list item (1., 2., etc)
+  result.isItem = false
+  result.num = 0
+  result.content = ""
 
-    # Check for unordered lists
-    var ulMatches: array[1, string]
-    if line.match(unorderedListPattern, ulMatches):
-      flushParagraph()
-      var items: seq[MdElement] = @[]
-      items.add(MdElement(kind: mdText, content: ulMatches[0]))
-      i += 1
-      # Collect consecutive list items
-      while i < lines.len:
-        var nextUlMatch: array[1, string]
-        if lines[i].match(unorderedListPattern, nextUlMatch):
-          items.add(MdElement(kind: mdText, content: nextUlMatch[0]))
-          i += 1
-        else:
-          break
-      result.add(MdElement(kind: mdList, children: items))
-      continue
+  let stripped = line.stripLeadingSpaces()
+  var pos = 0
+  var num = 0
+  while pos < stripped.len and stripped[pos] in {'0'..'9'}:
+    num = num * 10 + (stripped[pos].ord - '0'.ord)
+    pos.inc
 
-    # Check for ordered lists
-    var olMatches: array[2, string]
-    if line.match(orderedListPattern, olMatches):
-      flushParagraph()
-      var items: seq[MdElement] = @[]
-      items.add(MdElement(kind: mdText, content: olMatches[1]))
-      i += 1
-      # Collect consecutive list items
-      while i < lines.len:
-        var nextOlMatch: array[2, string]
-        if lines[i].match(orderedListPattern, nextOlMatch):
-          items.add(MdElement(kind: mdText, content: nextOlMatch[1]))
-          i += 1
-        else:
-          break
-      result.add(MdElement(kind: mdOrderedList, children: items))
-      continue
+  if pos > 0 and pos + 1 < stripped.len and stripped[pos] == '.' and stripped[pos+1] == ' ':
+    result.isItem = true
+    result.num = num
+    result.content = stripped[pos+2..^1].strip()
 
-    # Empty line ends paragraph
-    if line.strip().len == 0:
-      flushParagraph()
-      i += 1
-      continue
+proc isBlockQuote(line: string): tuple[isQuote: bool, content: string] =
+  ## Check if line is a blockquote
+  result.isQuote = false
+  result.content = ""
 
-    # Regular paragraph line
-    if currentParagraph.len > 0:
-      currentParagraph.add(" ")
-    currentParagraph.add(line)
-    i += 1
+  let stripped = line.stripLeadingSpaces()
+  if stripped.len > 2 and stripped[0] == '>' and stripped[1] == ' ':
+    result.isQuote = true
+    result.content = stripped[2..^1]
+  elif stripped.len == 1 and stripped[0] == '>':
+    result.isQuote = true
+    result.content = ""
 
-  flushParagraph()
+proc isHorizontalRule(line: string): bool =
+  ## Check if line is a horizontal rule (---, ***, ___)
+  let stripped = line.strip()
+  if stripped.len >= 3:
+    if stripped[0] == '-' and stripped.count('-') == stripped.len:
+      return true
+    if stripped[0] == '*' and stripped.count('*') == stripped.len:
+      return true
+    if stripped[0] == '_' and stripped.count('_') == stripped.len:
+      return true
+  return false
 
 proc parseMarkdown*(text: string): ParsedMarkdown =
   ## Parse markdown text into structured elements
@@ -274,32 +272,206 @@ proc parseMarkdown*(text: string): ParsedMarkdown =
   if text.len == 0:
     return
 
-  # First, extract code blocks (they need special handling)
-  let codeBlocks = extractCodeBlocks(text)
-  var lastPos = 0
+  var pos = 0
 
-  for cb in codeBlocks:
-    # Parse text before code block
-    if cb.start > lastPos:
-      let beforeText = text[lastPos..<cb.start]
-      let beforeElements = parseBlockElements(beforeText)
-      result.elements.add(beforeElements)
+  while pos < text.len:
+    # Skip leading whitespace on new block
+    while pos < text.len and text[pos] in {' ', '\t'}:
+      pos.inc
 
-    # Add code block
-    let lang = if cb.language.len > 0: cb.language else: detectLanguageFromContent(cb.content)
-    result.elements.add(MdElement(
-      kind: mdCodeBlock,
-      content: cb.content,
-      language: lang
-    ))
+    if pos >= text.len:
+      break
 
-    lastPos = cb.stop + 1
+    # Check for code block
+    if pos + 2 < text.len and text[pos..<pos+3] == "```":
+      let (lang, content, nextPos) = extractCodeBlock(text, pos)
+      if nextPos > pos:
+        result.elements.add(MdElement(
+          kind: mdCodeBlock,
+          content: content,
+          language: lang
+        ))
+        pos = nextPos
+        continue
 
-  # Parse remaining text after last code block
-  if lastPos < text.len:
-    let afterText = text[lastPos..^1]
-    let afterElements = parseBlockElements(afterText)
-    result.elements.add(afterElements)
+    # Find end of current line
+    var lineEnd = pos
+    while lineEnd < text.len and text[lineEnd] notin {'\n', '\r'}:
+      lineEnd.inc
+
+    let line = text[pos..<lineEnd]
+
+    # Skip empty lines
+    if line.strip().len == 0:
+      pos = lineEnd
+      if pos < text.len and text[pos] == '\r': pos.inc
+      if pos < text.len and text[pos] == '\n': pos.inc
+      continue
+
+    # Check for horizontal rule
+    if isHorizontalRule(line):
+      result.elements.add(MdElement(kind: mdHorizontalRule))
+      pos = lineEnd
+      if pos < text.len and text[pos] == '\r': pos.inc
+      if pos < text.len and text[pos] == '\n': pos.inc
+      continue
+
+    # Check for heading
+    let (isHeading, level, headingContent) = isHeadingLine(line)
+    if isHeading:
+      result.elements.add(MdElement(
+        kind: mdHeading,
+        level: level,
+        content: headingContent
+      ))
+      pos = lineEnd
+      if pos < text.len and text[pos] == '\r': pos.inc
+      if pos < text.len and text[pos] == '\n': pos.inc
+      continue
+
+    # Check for blockquote
+    let (isQuote, quoteStart) = isBlockQuote(line)
+    if isQuote:
+      var quoteLines: seq[string] = @[quoteStart]
+      pos = lineEnd
+      if pos < text.len and text[pos] == '\r': pos.inc
+      if pos < text.len and text[pos] == '\n': pos.inc
+
+      # Collect consecutive quote lines
+      while pos < text.len:
+        var nextLineEnd = pos
+        while nextLineEnd < text.len and text[nextLineEnd] notin {'\n', '\r'}:
+          nextLineEnd.inc
+        let nextLine = text[pos..<nextLineEnd]
+
+        if nextLine.strip().len == 0:
+          pos = nextLineEnd
+          if pos < text.len and text[pos] == '\r': pos.inc
+          if pos < text.len and text[pos] == '\n': pos.inc
+          continue
+
+        let (nextIsQuote, nextQuoteContent) = isBlockQuote(nextLine)
+        if nextIsQuote:
+          quoteLines.add(nextQuoteContent)
+          pos = nextLineEnd
+          if pos < text.len and text[pos] == '\r': pos.inc
+          if pos < text.len and text[pos] == '\n': pos.inc
+        else:
+          break
+
+      result.elements.add(MdElement(
+        kind: mdBlockQuote,
+        content: quoteLines.join("\n")
+      ))
+      continue
+
+    # Check for unordered list
+    let (isUl, ulContent) = isUnorderedListItem(line)
+    if isUl:
+      var items: seq[MdElement] = @[MdElement(kind: mdText, content: ulContent)]
+      pos = lineEnd
+      if pos < text.len and text[pos] == '\r': pos.inc
+      if pos < text.len and text[pos] == '\n': pos.inc
+
+      # Collect consecutive list items
+      while pos < text.len:
+        var nextLineEnd = pos
+        while nextLineEnd < text.len and text[nextLineEnd] notin {'\n', '\r'}:
+          nextLineEnd.inc
+        let nextLine = text[pos..<nextLineEnd]
+
+        if nextLine.strip().len == 0:
+          pos = nextLineEnd
+          if pos < text.len and text[pos] == '\r': pos.inc
+          if pos < text.len and text[pos] == '\n': pos.inc
+          continue
+
+        let (nextIsUl, nextUlContent) = isUnorderedListItem(nextLine)
+        if nextIsUl:
+          items.add(MdElement(kind: mdText, content: nextUlContent))
+          pos = nextLineEnd
+          if pos < text.len and text[pos] == '\r': pos.inc
+          if pos < text.len and text[pos] == '\n': pos.inc
+        else:
+          break
+
+      result.elements.add(MdElement(kind: mdList, children: items))
+      continue
+
+    # Check for ordered list
+    let (isOl, olNum, olContent) = isOrderedListItem(line)
+    if isOl:
+      var items: seq[MdElement] = @[MdElement(kind: mdText, content: olContent)]
+      pos = lineEnd
+      if pos < text.len and text[pos] == '\r': pos.inc
+      if pos < text.len and text[pos] == '\n': pos.inc
+
+      # Collect consecutive list items
+      while pos < text.len:
+        var nextLineEnd = pos
+        while nextLineEnd < text.len and text[nextLineEnd] notin {'\n', '\r'}:
+          nextLineEnd.inc
+        let nextLine = text[pos..<nextLineEnd]
+
+        if nextLine.strip().len == 0:
+          pos = nextLineEnd
+          if pos < text.len and text[pos] == '\r': pos.inc
+          if pos < text.len and text[pos] == '\n': pos.inc
+          continue
+
+        let (nextIsOl, _, nextOlContent) = isOrderedListItem(nextLine)
+        if nextIsOl:
+          items.add(MdElement(kind: mdText, content: nextOlContent))
+          pos = nextLineEnd
+          if pos < text.len and text[pos] == '\r': pos.inc
+          if pos < text.len and text[pos] == '\n': pos.inc
+        else:
+          break
+
+      result.elements.add(MdElement(kind: mdOrderedList, children: items))
+      continue
+
+    # Regular paragraph - collect lines until empty line or block element
+    var paraLines: seq[string] = @[line]
+    pos = lineEnd
+    if pos < text.len and text[pos] == '\r': pos.inc
+    if pos < text.len and text[pos] == '\n': pos.inc
+
+    while pos < text.len:
+      var nextLineEnd = pos
+      while nextLineEnd < text.len and text[nextLineEnd] notin {'\n', '\r'}:
+        nextLineEnd.inc
+      let nextLine = text[pos..<nextLineEnd]
+
+      # Stop at empty line or block element
+      if nextLine.strip().len == 0:
+        pos = nextLineEnd
+        if pos < text.len and text[pos] == '\r': pos.inc
+        if pos < text.len and text[pos] == '\n': pos.inc
+        break
+
+      # Check if it's a block element start
+      if isHeadingLine(nextLine).isHeading or
+         isUnorderedListItem(nextLine).isItem or
+         isOrderedListItem(nextLine).isItem or
+         isBlockQuote(nextLine).isQuote or
+         isHorizontalRule(nextLine) or
+         (pos + 2 < text.len and text[pos..<pos+3] == "```"):
+        break
+
+      paraLines.add(nextLine)
+      pos = nextLineEnd
+      if pos < text.len and text[pos] == '\r': pos.inc
+      if pos < text.len and text[pos] == '\n': pos.inc
+
+    # Parse inline elements in paragraph
+    let paraText = paraLines.join(" ").strip()
+    let inlineElements = parseInlineElements(paraText)
+
+    if inlineElements.len == 1 and inlineElements[0].kind == mdText:
+      result.elements.add(MdElement(kind: mdParagraph, content: inlineElements[0].content))
+    else:
+      result.elements.add(MdElement(kind: mdParagraph, content: "", children: inlineElements))
 
 # Terminal rendering constants
 const
@@ -335,9 +507,9 @@ proc renderToTerminalLines*(parsed: ParsedMarkdown, maxWidth: int, baseIndent: i
           of mdText:
             lineText.add(child.content)
           of mdStrong:
-            lineText.add(child.content) # Bold styling applied later
+            lineText.add(child.content)
           of mdEmphasis:
-            lineText.add(child.content) # Italic styling applied later
+            lineText.add(child.content)
           of mdInlineCode:
             lineText.add(child.content)
           of mdLink:
@@ -350,6 +522,8 @@ proc renderToTerminalLines*(parsed: ParsedMarkdown, maxWidth: int, baseIndent: i
         # Word wrap the paragraph
         var currentLine = ""
         for word in lineText.split(' '):
+          if word.len == 0:
+            continue
           if currentLine.len == 0:
             currentLine = word
           elif currentLine.len + 1 + word.len <= maxWidth - baseIndent:
@@ -364,6 +538,8 @@ proc renderToTerminalLines*(parsed: ParsedMarkdown, maxWidth: int, baseIndent: i
         # Simple paragraph
         var currentLine = ""
         for word in elem.content.split(' '):
+          if word.len == 0:
+            continue
           if currentLine.len == 0:
             currentLine = word
           elif currentLine.len + 1 + word.len <= maxWidth - baseIndent:
