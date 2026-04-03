@@ -1,4 +1,4 @@
-import std/[strutils, unicode]
+import std/[strutils, unicode, times, monotimes]
 import std/terminal except showCursor, hideCursor
 import textalot
 import chronos
@@ -7,31 +7,66 @@ import ../agent/loop
 import ../config
 
 type
-  ChatMessage* = object
+  DisplayLine* = object
+    ## A single line ready for display
+    text*: string
+    fgColor*: uint32
+    bgColor*: uint32
+    style*: uint16
+    indent*: int
+    role*: string
+
+  CachedMessage* = object
+    ## Cached rendering state for a message
     role*: string
     content*: string
-    toolCalls*: seq[providers_types.ToolCall]
-    expanded*: bool # For tool call visualization
+    wrappedLines*: seq[DisplayLine] # Cached wrapped lines
+    contentHash*: string            # To detect changes
+    height*: int                    # Total lines occupied
+    dirty*: bool                    # Needs re-wrap
+
+  StreamingState* = object
+    ## State for streaming message updates
+    active*: bool
+    messageIdx*: int
+    lastContent*: string
+    lastContentLen*: int
+    lastUpdateTime*: MonoTime
+    updateCount*: int
 
   TuiApp* = ref object
     running*: bool
     agentLoop*: AgentLoop
     cfg*: Config
     messages*: seq[ChatMessage]
+    cachedMessages*: seq[CachedMessage] # NEW: Cached render state
     inputBuffer*: string
     visualInput*: string
     cursorX*: int
     visualCursorX*: int
     scrollOffset*: int
     needsRedraw*: bool
+    needsFullRedraw*: bool              # NEW: Force full redraw
     isGenerating*: bool
     ctrlDCount*: int
     ctrlDHintVisible*: bool
+    streaming*: StreamingState          # NEW: Streaming state
+    lastRenderTime*: MonoTime           # NEW: For performance monitoring
+    renderCount*: int                   # NEW: Debug counter
+
+  ChatMessage* = object
+    role*: string
+    content*: string
+    toolCalls*: seq[providers_types.ToolCall]
+    expanded*: bool
 
 const
   HeaderHeight = 2
   InputHeight = 3
   InputStartX = 6
+  # Throttling for streaming updates
+  MinUpdateIntervalMs = 50 # Minimum ms between re-wraps
+  MinContentDelta = 10     # Minimum new chars before re-wrap
 
 proc readEventGcsafe(): Event =
   {.gcsafe.}:
@@ -40,6 +75,11 @@ proc readEventGcsafe(): Event =
 proc deinitTextalotGcsafe() =
   {.gcsafe.}:
     deinitTextalot()
+
+proc hashContent(content: string): string =
+  ## Simple hash for change detection
+  $content.len & "_" & (if content.len > 0: $content[0] else: "") & "_" &
+  (if content.len > 0: $content[^1] else: "")
 
 proc newTuiApp*(agentLoop: AgentLoop, cfg: Config): TuiApp =
   initTextalot()
@@ -52,15 +92,20 @@ proc newTuiApp*(agentLoop: AgentLoop, cfg: Config): TuiApp =
     agentLoop: agentLoop,
     cfg: cfg,
     messages: @[],
+    cachedMessages: @[],
     inputBuffer: "",
     visualInput: "",
     cursorX: 0,
     visualCursorX: 0,
     scrollOffset: 0,
     needsRedraw: true,
+    needsFullRedraw: true,
     isGenerating: false,
     ctrlDCount: 0,
-    ctrlDHintVisible: false
+    ctrlDHintVisible: false,
+    streaming: StreamingState(active: false, messageIdx: -1),
+    lastRenderTime: getMonoTime(),
+    renderCount: 0
   )
 
 proc chatHeight(app: TuiApp): int =
@@ -130,14 +175,15 @@ proc drawTextWide*(text: string, x, y: int, fg, bg: uint32, style: uint16 = STYL
       drawText(r.toUTF8(), currentX, y, fg, bg, style)
     currentX += rw
 
-proc wrapText(text: string, maxWidth: int): seq[string] =
+proc wrapTextToLines(text: string, maxWidth: int, role: string, indent: int): seq[DisplayLine] =
   ## Word wrap with fallback for no-space languages (e.g. CJK)
+  ## Returns DisplayLine objects ready for rendering
   result = @[]
 
   for rawLine in text.splitLines():
     var currentLine = ""
     var currentWidth = 0
-    var lineResult: seq[string] = @[]
+    var lineResult: seq[DisplayLine] = @[]
 
     for word in rawLine.split(' '):
       let wordWidth = stringDisplayWidth(word)
@@ -150,36 +196,211 @@ proc wrapText(text: string, maxWidth: int): seq[string] =
         currentLine.add(" " & word)
         currentWidth += 1 + wordWidth
       else:
-        lineResult.add(currentLine)
+        lineResult.add(DisplayLine(
+          text: currentLine,
+          fgColor: FG_COLOR_DEFAULT,
+          bgColor: BG_COLOR_DEFAULT,
+          style: STYLE_NONE,
+          indent: indent,
+          role: role
+        ))
         currentLine = word
         currentWidth = wordWidth
 
     if currentLine.len > 0:
-      lineResult.add(currentLine)
+      lineResult.add(DisplayLine(
+        text: currentLine,
+        fgColor: FG_COLOR_DEFAULT,
+        bgColor: BG_COLOR_DEFAULT,
+        style: STYLE_NONE,
+        indent: indent,
+        role: role
+      ))
     elif rawLine.len == 0:
-      lineResult.add("")
+      lineResult.add(DisplayLine(
+        text: "",
+        fgColor: FG_COLOR_DEFAULT,
+        bgColor: BG_COLOR_DEFAULT,
+        style: STYLE_NONE,
+        indent: indent,
+        role: role
+      ))
 
-    # Handle lines that are still too long
+    # Handle lines that are still too long (CJK fallback)
     for line in lineResult:
-      if stringDisplayWidth(line) <= maxWidth:
+      if stringDisplayWidth(line.text) <= maxWidth:
         result.add(line)
       else:
         var current = ""
         var currentWidth = 0
-        for r in line.runes:
+        for r in line.text.runes:
           let rw = runeDisplayWidth(r)
           if currentWidth + rw > maxWidth:
-            result.add(current)
+            result.add(DisplayLine(
+              text: current,
+              fgColor: FG_COLOR_DEFAULT,
+              bgColor: BG_COLOR_DEFAULT,
+              style: STYLE_NONE,
+              indent: indent,
+              role: role
+            ))
             current = r.toUTF8
             currentWidth = rw
           else:
             current.add(r.toUTF8)
             currentWidth += rw
         if current.len > 0:
-          result.add(current)
+          result.add(DisplayLine(
+            text: current,
+            fgColor: FG_COLOR_DEFAULT,
+            bgColor: BG_COLOR_DEFAULT,
+            style: STYLE_NONE,
+            indent: indent,
+            role: role
+          ))
 
   if result.len == 0:
-    result.add("")
+    result.add(DisplayLine(
+      text: "",
+      fgColor: FG_COLOR_DEFAULT,
+      bgColor: BG_COLOR_DEFAULT,
+      style: STYLE_NONE,
+      indent: indent,
+      role: role
+    ))
+
+proc getRoleColor(role: string): uint32 =
+  case role:
+  of "user": FG_COLOR_CYAN
+  of "assistant": FG_COLOR_GREEN
+  of "system": FG_COLOR_YELLOW
+  of "tool": FG_COLOR_MAGENTA
+  else: FG_COLOR_DEFAULT
+
+proc getRolePrefix(role: string): string =
+  case role:
+  of "user": "You:"
+  of "assistant": ">"
+  of "system": "⚙"
+  of "tool": "🔧"
+  else: "•"
+
+proc updateCachedMessage(app: TuiApp, msgIdx: int) =
+  ## Update cached display lines for a single message (incremental)
+  if msgIdx >= app.messages.len:
+    return
+
+  let msg = app.messages[msgIdx]
+  let contentHash = hashContent(msg.content)
+
+  # Check if cache exists and is up to date
+  if msgIdx < app.cachedMessages.len:
+    let cached = app.cachedMessages[msgIdx]
+    if cached.contentHash == contentHash and not cached.dirty:
+      return # Cache hit - nothing to do
+  else:
+    # Extend cache to include this message
+    while app.cachedMessages.len <= msgIdx:
+      app.cachedMessages.add(CachedMessage())
+
+  # Re-wrap the message content
+  let maxContentWidth = app.chatWidth() - 12
+  var wrappedLines: seq[DisplayLine] = @[]
+
+  # Add role indicator line
+  let rolePrefix = getRolePrefix(msg.role)
+  let roleColor = getRoleColor(msg.role)
+  wrappedLines.add(DisplayLine(
+    text: rolePrefix,
+    fgColor: roleColor,
+    bgColor: BG_COLOR_DEFAULT,
+    style: STYLE_NONE,
+    indent: 0,
+    role: msg.role
+  ))
+
+  # Add content lines
+  let contentLines = wrapTextToLines(msg.content, maxContentWidth, msg.role, 6)
+  wrappedLines.add(contentLines)
+
+  # Add empty line after message
+  wrappedLines.add(DisplayLine(
+    text: "",
+    fgColor: FG_COLOR_DEFAULT,
+    bgColor: BG_COLOR_DEFAULT,
+    style: STYLE_NONE,
+    indent: 0,
+    role: ""
+  ))
+
+  # Update cache
+  app.cachedMessages[msgIdx] = CachedMessage(
+    role: msg.role,
+    content: msg.content,
+    wrappedLines: wrappedLines,
+    contentHash: contentHash,
+    height: wrappedLines.len,
+    dirty: false
+  )
+
+proc getTotalCachedHeight(app: TuiApp): int =
+  ## Get total height of all cached messages
+  result = 0
+  for cached in app.cachedMessages:
+    result += cached.height
+
+proc shouldThrottleUpdate(app: TuiApp, content: string): bool =
+  ## Check if we should throttle this update (for streaming)
+  if not app.streaming.active:
+    return false
+
+  let now = getMonoTime()
+  let timeSinceLast = (now - app.streaming.lastUpdateTime).inMilliseconds
+  let contentDelta = content.len - app.streaming.lastContentLen
+
+  # Throttle if too soon AND not enough new content
+  if timeSinceLast < MinUpdateIntervalMs and contentDelta < MinContentDelta:
+    return true
+
+  return false
+
+proc handleStreamingUpdate*(app: TuiApp, msgIdx: int, content: string, reasoning: string, isDone: bool) =
+  ## Optimized handler for streaming updates from onUpdate callback
+
+  # Initialize streaming state if needed
+  if not app.streaming.active:
+    app.streaming.active = true
+    app.streaming.messageIdx = msgIdx
+    app.streaming.lastContent = ""
+    app.streaming.lastContentLen = 0
+    app.streaming.lastUpdateTime = getMonoTime()
+    app.streaming.updateCount = 0
+
+  # Update the message content
+  if msgIdx < app.messages.len:
+    app.messages[msgIdx].content = content
+
+  # Check if we should process this update or throttle it
+  if not isDone and app.shouldThrottleUpdate(content):
+    return # Skip this update, wait for next
+  
+  # Update streaming state
+  app.streaming.lastContent = content
+  app.streaming.lastContentLen = content.len
+  app.streaming.lastUpdateTime = getMonoTime()
+  app.streaming.updateCount += 1
+
+  # Mark only the streaming message as dirty
+  if msgIdx < app.cachedMessages.len:
+    app.cachedMessages[msgIdx].dirty = true
+
+  # For streaming, we do partial redraw (not full)
+  app.needsRedraw = true
+
+  # When done, finalize
+  if isDone:
+    app.streaming.active = false
+    app.streaming.messageIdx = -1
 
 proc addMessage(app: TuiApp, role, content: string, toolCalls: seq[providers_types.ToolCall] = @[]) =
   app.messages.add(ChatMessage(
@@ -188,6 +409,8 @@ proc addMessage(app: TuiApp, role, content: string, toolCalls: seq[providers_typ
     toolCalls: toolCalls,
     expanded: false
   ))
+  # Mark that we need to extend cache for new message
+  app.needsFullRedraw = true
   app.needsRedraw = true
 
 proc sendMessage(app: TuiApp) {.async.} =
@@ -204,25 +427,29 @@ proc sendMessage(app: TuiApp) {.async.} =
   app.cursorX = 0
   app.updateVisualInput()
   app.isGenerating = true
+  app.needsFullRedraw = true
   app.needsRedraw = true
 
   # Add placeholder message for assistant that will be updated incrementally
   let assistantMsgIdx = app.messages.len
   app.addMessage("assistant", "")
 
-  # Create callback for incremental updates
+  # Create callback for incremental updates (optimized)
   let onUpdate = proc(content: string, reasoning: string, isDone: bool) {.gcsafe.} =
     {.gcsafe.}:
       if assistantMsgIdx < app.messages.len:
-        app.messages[assistantMsgIdx].content = content
-        app.needsRedraw = true
+        # Use optimized streaming handler instead of just setting needsRedraw
+        app.handleStreamingUpdate(assistantMsgIdx, content, reasoning, isDone)
 
   let response = await app.agentLoop.processDirect(userInput, "tui:default", onUpdate)
 
   # Ensure final content is set
   if assistantMsgIdx < app.messages.len:
     app.messages[assistantMsgIdx].content = response
+    if assistantMsgIdx < app.cachedMessages.len:
+      app.cachedMessages[assistantMsgIdx].dirty = true
   app.isGenerating = false
+  app.streaming.active = false
   app.needsRedraw = true
 
 proc deleteRuneBefore(app: TuiApp) =
@@ -274,7 +501,6 @@ proc countNewlines(s: string, upToRunePos: int): int =
     if runePos >= upToRunePos: break
     if r == Rune('\n'): count.inc
     runePos.inc
-  result = count
 
 proc lastNewlineRunePos(s: string, upToRunePos: int): int =
   var last = -1
@@ -351,7 +577,7 @@ proc handleEvent(app: TuiApp, ev: Event) =
         app.needsRedraw = true
 
     of EVENT_KEY_ARROW_DOWN:
-      let maxScroll = max(0, app.messages.len - app.chatHeight())
+      let maxScroll = max(0, app.getTotalCachedHeight() - app.chatHeight())
       if app.scrollOffset < maxScroll:
         app.scrollOffset.inc
         app.needsRedraw = true
@@ -361,14 +587,16 @@ proc handleEvent(app: TuiApp, ev: Event) =
       app.needsRedraw = true
 
     of EVENT_KEY_PGDN:
-      let maxScroll = max(0, app.messages.len - app.chatHeight())
+      let maxScroll = max(0, app.getTotalCachedHeight() - app.chatHeight())
       app.scrollOffset = min(maxScroll, app.scrollOffset + app.chatHeight())
       app.needsRedraw = true
 
     of EVENT_KEY_CTRL_L:
       # Clear screen
       app.messages = @[]
+      app.cachedMessages = @[]
       app.scrollOffset = 0
+      app.needsFullRedraw = true
       app.needsRedraw = true
 
     of EVENT_KEY_CTRL_D:
@@ -400,7 +628,7 @@ proc handleEvent(app: TuiApp, ev: Event) =
         app.scrollOffset.dec
       app.needsRedraw = true
     of EVENT_MOUSE_WHEEL_DOWN:
-      let maxScroll = max(0, app.messages.len - app.chatHeight())
+      let maxScroll = max(0, app.getTotalCachedHeight() - app.chatHeight())
       if app.scrollOffset < maxScroll:
         app.scrollOffset.inc
       app.needsRedraw = true
@@ -410,6 +638,8 @@ proc handleEvent(app: TuiApp, ev: Event) =
   elif ev of ResizeEvent:
     {.gcsafe.}:
       recreateBuffers()
+    # Resize requires full recalculation
+    app.needsFullRedraw = true
     app.needsRedraw = true
 
 proc renderHeader(app: TuiApp) =
@@ -436,41 +666,52 @@ proc renderHeader(app: TuiApp) =
   # Separator line (dim)
   drawRectangle(0, 1, w, 2, BG_COLOR_DEFAULT, FG_COLOR_DEFAULT, "─", STYLE_FAINT)
 
-proc renderChat(app: TuiApp) =
+proc renderChatIncremental(app: TuiApp) =
+  ## Incremental chat rendering - only updates changed/dirty messages
   let w = app.chatWidth()
   let h = app.chatHeight()
   let startY = HeaderHeight + 1
   let maxContentWidth = w - 12
 
-  # Clear chat area
-  removeArea(0, startY, w, startY + h)
+  # Clear chat area only on full redraw
+  if app.needsFullRedraw:
+    removeArea(0, startY, w, startY + h)
 
-  # Build display lines from messages
-  var displayLines: seq[tuple[role: string, text: string, indent: int]] = @[]
+  # Build/update cache for all visible messages
+  var totalHeight = 0
+  for i in 0..<app.messages.len:
+    app.updateCachedMessage(i)
+    totalHeight += app.cachedMessages[i].height
 
-  for msg in app.messages:
-    # Role indicator line
-    case msg.role:
-    of "user":
-      displayLines.add(("user", "You:", 0))
-    of "assistant":
-      displayLines.add(("assistant", ">", 0))
-    of "system":
-      displayLines.add(("system", "⚙:", 0))
-    of "tool":
-      displayLines.add(("tool", "🔧:", 0))
-    else:
-      displayLines.add(("", "•", 0))
+  # Calculate visible range based on scroll offset
+  let visibleStart = app.scrollOffset
+  let visibleEnd = visibleStart + h
 
-    # Content lines (wrapped)
-    let wrapped = wrapText(msg.content, maxContentWidth)
-    for i, line in wrapped:
-      displayLines.add((msg.role, line, 6))
+  # Collect all lines that need to be displayed
+  var allLines: seq[DisplayLine] = @[]
+  var currentLineIdx = 0
 
-    # Empty line between messages
-    displayLines.add(("", "", 0))
+  for i in 0..<app.cachedMessages.len:
+    let cached = app.cachedMessages[i]
+    let msgStart = currentLineIdx
+    let msgEnd = currentLineIdx + cached.height
 
-  # Draw from bottom up with scroll offset
+    # Skip if message is entirely outside visible range
+    if msgEnd < visibleStart or msgStart > visibleEnd:
+      currentLineIdx = msgEnd
+      continue
+
+    # Add visible lines from this message
+    let lineStart = max(0, visibleStart - msgStart)
+    let lineEnd = min(cached.height, visibleEnd - msgStart)
+
+    for j in lineStart..<lineEnd:
+      if j < cached.wrappedLines.len:
+        allLines.add(cached.wrappedLines[j])
+
+    currentLineIdx = msgEnd
+
+  # Draw from bottom up
   var currentY = startY + h - 1
 
   # Draw Ctrl+D hint at the bottom of chat area if visible
@@ -479,25 +720,22 @@ proc renderChat(app: TuiApp) =
     drawTextWide(hint, 2, currentY, FG_COLOR_YELLOW, BG_COLOR_DEFAULT, STYLE_FAINT)
     currentY.dec
 
-  let startIdx = max(0, displayLines.len - h - app.scrollOffset)
-  let endIdx = min(displayLines.len - 1, displayLines.len - 1 - app.scrollOffset)
-
-  for i in countdown(endIdx, startIdx):
+  # Draw visible lines
+  for i in countdown(allLines.len - 1, 0):
     if currentY < startY: break
 
-    let (role, text, indent) = displayLines[i]
-
-    if text.len > 0:
-      # Set color based on role
-      var fg = FG_COLOR_DEFAULT
-      case role:
-      of "user": fg = FG_COLOR_CYAN
-      of "assistant": fg = FG_COLOR_GREEN
-      of "system": fg = FG_COLOR_YELLOW
-      of "tool": fg = FG_COLOR_MAGENTA
-      drawTextWide(text, indent, currentY, fg, BG_COLOR_DEFAULT, STYLE_NONE)
+    let line = allLines[i]
+    if line.text.len > 0:
+      # Get color based on role
+      var fg = line.fgColor
+      if fg == FG_COLOR_DEFAULT:
+        fg = getRoleColor(line.role)
+      drawTextWide(line.text, line.indent, currentY, fg, line.bgColor, line.style)
 
     currentY.dec
+
+  # Reset full redraw flag
+  app.needsFullRedraw = false
 
 proc renderInput(app: TuiApp) =
   let w = getTerminalWidth()
@@ -536,15 +774,27 @@ proc render*(app: TuiApp) =
 
   let w = getTerminalWidth()
   let h = getTerminalHeight()
+
+  # Performance tracking
+  app.renderCount += 1
+  let renderStart = getMonoTime()
+
   {.gcsafe.}:
-    removeArea(0, 0, w, h)
+    # Only clear full screen on full redraw
+    if app.needsFullRedraw:
+      removeArea(0, 0, w, h)
+
     app.renderHeader()
-    app.renderChat()
+    app.renderChatIncremental() # Use incremental rendering
     app.renderInput()
     texalotRender()
     app.positionCursor()
 
   app.needsRedraw = false
+
+  # Track render time
+  let renderEnd = getMonoTime()
+  app.lastRenderTime = renderEnd
 
 proc run*(app: TuiApp) {.async.} =
   app.updateVisualInput()
