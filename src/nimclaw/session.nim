@@ -356,6 +356,31 @@ proc truncateHistory*(sm: SessionManager, key: string, keepLast: int) =
   session.messages = session.messages[session.messages.len - keepLast .. ^1]
   session.updated = getTime().toUnixFloat()
 
+proc deleteSession*(sm: SessionManager, key: string) =
+  ## Delete a session completely (from memory and storage)
+  var safeKey = key
+
+  # Validate session key
+  if not validateSessionKey(safeKey):
+    raise newException(ValueError, "Invalid session key: " & key)
+
+  acquire(sm.lock)
+  defer: release(sm.lock)
+
+  # Remove from memory
+  if sm.sessions.hasKey(safeKey):
+    sm.sessions.del(safeKey)
+
+  # Remove from storage
+  if sm.storage != "":
+    let safeStorage = sanitizePath(sm.storage)
+    let path = safeStorage / (safeKey & ".json")
+    try:
+      if fileExists(path):
+        removeFile(path)
+    except:
+      discard
+
 proc save*(sm: SessionManager, session: Session) =
   ## Save a session to storage
   if sm.storage == "": return

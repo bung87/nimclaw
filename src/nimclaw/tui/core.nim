@@ -54,6 +54,8 @@ type
     streaming*: StreamingState          # NEW: Streaming state
     lastRenderTime*: MonoTime           # NEW: For performance monitoring
     renderCount*: int                   # NEW: Debug counter
+    sessionKey*: string                 # Current session key
+    sessionCounter*: int                # For generating new session keys
 
   ChatMessage* = object
     role*: string
@@ -117,7 +119,9 @@ proc newTuiApp*(agentLoop: AgentLoop, cfg: Config): TuiApp =
     ctrlDHintVisible: false,
     streaming: StreamingState(active: false, messageIdx: -1),
     lastRenderTime: getMonoTime(),
-    renderCount: 0
+    renderCount: 0,
+    sessionKey: "tui:default",
+    sessionCounter: 1
   )
 
 proc chatHeight(app: TuiApp): int =
@@ -452,6 +456,19 @@ proc sendMessage(app: TuiApp) {.async.} =
     app.running = false
     return
 
+  # Handle /new command to create a fresh session
+  if userInput.strip() == "/new":
+    app.sessionCounter += 1
+    app.sessionKey = "tui:default:" & $app.sessionCounter
+    app.messages = @[]
+    app.cachedMessages = @[]
+    app.inputBuffer = ""
+    app.cursorX = 0
+    app.updateVisualInput()
+    app.needsFullRedraw = true
+    app.needsRedraw = true
+    return
+
   app.addMessage("user", userInput)
   app.inputBuffer = ""
   app.cursorX = 0
@@ -471,7 +488,7 @@ proc sendMessage(app: TuiApp) {.async.} =
         # Use optimized streaming handler instead of just setting needsRedraw
         app.handleStreamingUpdate(assistantMsgIdx, content, reasoning, isDone)
 
-  let response = await app.agentLoop.processDirect(userInput, "tui:default", onUpdate)
+  let response = await app.agentLoop.processDirect(userInput, app.sessionKey, onUpdate)
 
   # Ensure final content is set
   if assistantMsgIdx < app.messages.len:
