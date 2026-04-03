@@ -130,7 +130,14 @@ proc chatWidth(app: TuiApp): int =
 proc updateVisualInput(app: TuiApp) =
   let maxWidth = getTerminalWidth() - InputStartX - 4
   let totalRunes = app.inputBuffer.runeLen
-  let cursorRunes = app.inputBuffer[0..<app.cursorX].runeLen
+
+  # Ensure cursorX is within valid bounds (cursorX is byte position)
+  if app.cursorX < 0:
+    app.cursorX = 0
+  if app.cursorX > app.inputBuffer.len:
+    app.cursorX = app.inputBuffer.len
+
+  let cursorRunes = if app.cursorX > 0: app.inputBuffer[0..<app.cursorX].runeLen else: 0
 
   if totalRunes <= maxWidth:
     app.visualInput = app.inputBuffer
@@ -476,23 +483,41 @@ proc sendMessage(app: TuiApp) {.async.} =
   app.needsRedraw = true
 
 proc deleteRuneBefore(app: TuiApp) =
+  ## Delete the rune before the cursor position
+  if app.cursorX <= 0 or app.inputBuffer.len == 0:
+    return
+
   var newBuffer = ""
   var currentPos = 0
+  var deleted = false
   for r in app.inputBuffer.runes:
     let rstr = r.toUTF8
-    if currentPos + rstr.len == app.cursorX:
+    if not deleted and currentPos + rstr.len == app.cursorX:
+      # This is the rune to delete (it's before the cursor)
       app.cursorX = currentPos
+      deleted = true
+      # Skip adding this rune to newBuffer
     else:
       newBuffer.add(rstr)
     currentPos += rstr.len
   app.inputBuffer = newBuffer
 
 proc deleteRuneAt(app: TuiApp) =
+  ## Delete the rune at the cursor position (forward delete)
+  # cursorX is byte position, so compare with byte length
+  if app.cursorX >= app.inputBuffer.len or app.inputBuffer.len == 0:
+    return
+
   var newBuffer = ""
   var currentPos = 0
+  var deleted = false
   for r in app.inputBuffer.runes:
     let rstr = r.toUTF8
-    if currentPos != app.cursorX:
+    if not deleted and currentPos == app.cursorX:
+      # This is the rune to delete (at cursor position)
+      deleted = true
+      # Skip adding this rune to newBuffer
+    else:
       newBuffer.add(rstr)
     currentPos += rstr.len
   app.inputBuffer = newBuffer
