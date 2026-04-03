@@ -44,7 +44,7 @@ proc newAgentLoop*(cfg: Config, msgBus: MessageBus, provider: LLMProvider): Agen
   toolsRegistry.register(ListDirTool())
   toolsRegistry.register(newExecTool(workspace))
 
-  toolsRegistry.register(newWebSearchTool(cfg.tools.web.search.api_key, cfg.tools.web.search.max_results))
+  toolsRegistry.register(newWebSearchTool(cfg.tools.web.search))
   toolsRegistry.register(newWebFetchTool(50000))
 
   let msgTool = newMessageTool()

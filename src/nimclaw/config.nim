@@ -82,9 +82,18 @@ type
     host*: string
     port*: int
 
+  SearchProviderConfig* = object
+    name*: string
+    api_key*: string
+    base_url*: string
+    enabled*: bool
+
   WebSearchConfig* = object
     api_key*: string
     max_results*: int
+    timeout_seconds*: int
+    providers*: seq[SearchProviderConfig]
+    fallback_order*: seq[string]
 
   WebToolsConfig* = object
     search*: WebSearchConfig
@@ -132,7 +141,14 @@ proc defaultConfig*(): Config =
     gateway: GatewayConfig(host: "0.0.0.0", port: 18790),
     tools: ToolsConfig(
       web: WebToolsConfig(
-        search: WebSearchConfig(max_results: 5)
+        search: WebSearchConfig(
+          max_results: 5,
+          timeout_seconds: 30,
+          providers: @[
+            SearchProviderConfig(name: "searxng", base_url: "http://localhost:8888", enabled: true)
+      ],
+      fallback_order: @["searxng"]
+    )
       )
     )
   )
@@ -142,6 +158,7 @@ proc parseEnv*(cfg: var Config) =
   if existsEnv("NIMCLAW_AGENTS_DEFAULTS_WORKSPACE"): cfg.agents.defaults.workspace = getEnv("NIMCLAW_AGENTS_DEFAULTS_WORKSPACE")
   if existsEnv("NIMCLAW_AGENTS_DEFAULTS_MODEL"): cfg.agents.defaults.model = getEnv("NIMCLAW_AGENTS_DEFAULTS_MODEL")
   if existsEnv("NIMCLAW_AGENTS_DEFAULTS_PROVIDER"): cfg.agents.defaults.provider = getEnv("NIMCLAW_AGENTS_DEFAULTS_PROVIDER")
+  if existsEnv("BRAVE_API_KEY"): cfg.tools.web.search.api_key = getEnv("BRAVE_API_KEY")
 
 proc loadConfig*(path: string): Config =
   result = defaultConfig()
@@ -153,6 +170,20 @@ proc loadConfig*(path: string): Config =
       discard # Log error maybe
 
   parseEnv(result)
+
+  # Backward-compat: if old api_key is present but no explicit providers,
+  # auto-migrate to a Brave provider in the fallback chain.
+  if result.tools.web.search.api_key != "" and result.tools.web.search.providers.len == 0:
+    result.tools.web.search.providers.add(SearchProviderConfig(
+      name: "brave", api_key: result.tools.web.search.api_key, enabled: true
+    ))
+    result.tools.web.search.fallback_order = @["brave", "searxng"]
+  elif result.tools.web.search.providers.len == 0:
+    # If nothing configured, default to SearXNG (self-hosted, truly free)
+    result.tools.web.search.providers = @[
+      SearchProviderConfig(name: "searxng", base_url: "http://localhost:8888", enabled: true)
+    ]
+    result.tools.web.search.fallback_order = @["searxng"]
 
 proc saveConfig*(path: string, cfg: Config) =
   let dir = parentDir(path)

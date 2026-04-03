@@ -1,19 +1,17 @@
 import chronos
-import chronos/apps/http/httpclient
+import puppy
 import std/[json, tables, strutils, uri]
 import pkg/regex except re
 import types
-
-const userAgent = "Mozilla/5.0 (compatible; nimclaw/1.0)"
+import search_providers/[base, brave, searxng]
+import ../config
 
 type
   WebSearchTool* = ref object of Tool
-    apiKey*: string
-    maxResults*: int
+    cfg*: WebSearchConfig
 
-proc newWebSearchTool*(apiKey: string, maxResults: int): WebSearchTool =
-  let count = if maxResults <= 0 or maxResults > 10: 5 else: maxResults
-  WebSearchTool(apiKey: apiKey, maxResults: count)
+proc newWebSearchTool*(cfg: WebSearchConfig): WebSearchTool =
+  WebSearchTool(cfg: cfg)
 
 method name*(t: WebSearchTool): string = "web_search"
 method description*(t: WebSearchTool): string = "Search the web for current information. Returns titles, URLs, and snippets from search results."
@@ -24,78 +22,61 @@ method parameters*(t: WebSearchTool): Table[string, JsonNode] =
       "query": {
         "type": "string",
         "description": "Search query"
-      },
-      "count": {
-        "type": "integer",
-        "description": "Number of results (1-10)",
-        "minimum": 1,
-        "maximum": 10
-      }
     },
+    "count": {
+      "type": "integer",
+      "description": "Number of results (1-10)",
+      "minimum": 1,
+      "maximum": 10
+    }
+  },
     "required": %["query"]
   }.toTable
 
+proc buildProviders(cfg: WebSearchConfig): Table[string, SearchProvider] =
+  result = initTable[string, SearchProvider]()
+  for pc in cfg.providers:
+    if not pc.enabled: continue
+    case pc.name.toLowerAscii():
+    of "brave":
+      result[pc.name] = newBraveProvider(pc.api_key)
+    of "searxng":
+      result[pc.name] = newSearXNGProvider(pc.base_url)
+    else:
+      discard
+
 method execute*(t: WebSearchTool, args: Table[string, JsonNode]): Future[string] {.async.} =
-  if t.apiKey == "": raise newException(ValueError, "BRAVE_API_KEY not configured")
   if not args.hasKey("query"): return "Error: query is required"
   let query = args["query"].getStr()
-  var count = t.maxResults
+  var count = t.cfg.max_results
+  if count <= 0 or count > 10: count = 5
   if args.hasKey("count"):
-    count = args["count"].getInt()
-    if count <= 0 or count > 10: count = t.maxResults
+    let c = args["count"].getInt()
+    if c > 0 and c <= 10: count = c
 
-  let searchURL = "https://api.search.brave.com/res/v1/web/search?q=$1&count=$2".format(encodeUrl(query), count)
+  let providers = buildProviders(t.cfg)
+  if providers.len == 0:
+    return "Error: no search providers configured"
 
-  let session = HttpSessionRef.new()
-  var headers: seq[HttpHeaderTuple] = @[
-    (key: "Accept", value: "application/json"),
-    (key: "X-Subscription-Token", value: t.apiKey),
-    (key: "User-Agent", value: userAgent)
-  ]
+  var order = t.cfg.fallback_order
+  if order.len == 0:
+    for k in providers.keys: order.add(k)
 
-  var response: HttpClientResponseRef = nil
-  try:
-    let addressRes = session.getAddress(searchURL)
-    if addressRes.isErr:
-      return "Error: failed to resolve URL"
-    let address = addressRes.get()
+  var lastError = ""
+  for providerName in order:
+    if not providers.hasKey(providerName): continue
+    let provider = providers[providerName]
+    try:
+      let results = await provider.search(query, count)
+      return formatResults(results, query)
+    except CatchableError as e:
+      let msg = e.msg
+      lastError = "$1: $2".format(providerName, msg)
+      if msg.contains("not configured") or msg.contains("401") or msg.contains("403") or msg.contains("bad request"):
+        return "Error: " & lastError
+      continue
 
-    let request = HttpClientRequestRef.new(
-      session,
-      address,
-      meth = MethodGet,
-      headers = headers
-    )
-
-    response = await request.send()
-    let bodyBytes = await response.getBodyBytes()
-    await response.closeWait()
-    response = nil
-    let body = cast[string](bodyBytes)
-    let jsonResp = parseJson(body)
-
-    if not jsonResp.hasKey("web") or not jsonResp["web"].hasKey("results"):
-      return "No results for: " & query
-
-    let results = jsonResp["web"]["results"]
-    if results.len == 0:
-      return "No results for: " & query
-
-    var lines: seq[string] = @[]
-    lines.add("Results for: " & query)
-    for i in 0 ..< min(results.len, count):
-      let item = results[i]
-      lines.add("$1. $2\n   $3".format(i + 1, item["title"].getStr(), item["url"].getStr()))
-      if item.hasKey("description"):
-        lines.add("   " & item["description"].getStr())
-
-    return lines.join("\n")
-  except CatchableError as e:
-    if not isNil(response):
-      await response.closeWait()
-    return "Error: search failed: " & e.msg
-  finally:
-    await session.closeWait()
+  return "Error: all search providers failed. Last error: " & lastError
 
 type
   WebFetchTool* = ref object of Tool
@@ -114,13 +95,13 @@ method parameters*(t: WebFetchTool): Table[string, JsonNode] =
       "url": {
         "type": "string",
         "description": "URL to fetch"
-      },
-      "maxChars": {
-        "type": "integer",
-        "description": "Maximum characters to extract",
-        "minimum": 100
-      }
     },
+    "maxChars": {
+      "type": "integer",
+      "description": "Maximum characters to extract",
+      "minimum": 100
+    }
+  },
     "required": %["url"]
   }.toTable
 
@@ -145,38 +126,19 @@ method execute*(t: WebFetchTool, args: Table[string, JsonNode]): Future[string] 
     let mc = args["maxChars"].getInt()
     if mc > 100: maxChars = mc
 
-  let session = HttpSessionRef.new()
-  var headers: seq[HttpHeaderTuple] = @[
-    (key: "User-Agent", value: userAgent)
-  ]
+  const userAgent = "Mozilla/5.0 (compatible; nimclaw/1.0)"
+  let headers = @[("User-Agent", userAgent)]
 
-  var response: HttpClientResponseRef = nil
   try:
-    let addressRes = session.getAddress(urlStr)
-    if addressRes.isErr:
-      return "Error: failed to resolve URL"
-    let address = addressRes.get()
+    let res = puppy.get(urlStr, headers)
+    let body = res.body
+    let status = res.code
 
-    let request = HttpClientRequestRef.new(
-      session,
-      address,
-      meth = MethodGet,
-      headers = headers
-    )
-
-    response = await request.send()
-    let bodyBytes = await response.getBodyBytes()
-    let status = response.status
-    
     var contentType = ""
-    for (k, v) in response.headers.stringItems:
+    for (k, v) in res.headers:
       if k.toLowerAscii == "content-type":
         contentType = v
         break
-    
-    await response.closeWait()
-    response = nil
-    let body = cast[string](bodyBytes)
 
     var text = ""
     var extractor = ""
@@ -205,8 +167,4 @@ method execute*(t: WebFetchTool, args: Table[string, JsonNode]): Future[string] 
     }
     return resObj.pretty()
   except CatchableError as e:
-    if not isNil(response):
-      await response.closeWait()
     return "Error: fetch failed: " & e.msg
-  finally:
-    await session.closeWait()
