@@ -1,6 +1,7 @@
 import chronos
 import std/[os, times, strutils, locks, options, sequtils]
 import jsony
+import ../logger
 
 type
   CronSchedule* = object
@@ -77,8 +78,8 @@ proc loadStore(cs: CronService) =
     try:
       let data = readFile(cs.storePath)
       cs.store = data.fromJson(CronStore)
-    except:
-      discard
+    except CatchableError as e:
+      warn "Failed to load cron store", topic = "cron", error = e.msg
 
 proc newCronService*(storePath: string, onJob: JobHandler): CronService =
   var cs = CronService(

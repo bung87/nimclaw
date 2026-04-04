@@ -89,6 +89,12 @@ method execute*(t: ListDirTool, args: Table[string, JsonNode]): Future[string] {
   let path = if args.hasKey("path"): args["path"].getStr() else: "."
   try:
     let safePath = validatePath(path)
+    # Check if path exists first
+    if not dirExists(safePath):
+      if fileExists(safePath):
+        return "Error: path is a file, not a directory: " & safePath
+      else:
+        return "Error: directory does not exist: " & safePath
     var output = ""
     for kind, entry in walkDir(safePath):
       let fullPath = safePath / entry

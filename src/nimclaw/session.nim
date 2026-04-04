@@ -2,6 +2,7 @@ import std/[os, times, locks, tables, strutils, options, json]
 import pkg/regex except re
 import providers/types as providers_types
 import ./security
+import ./logger
 
 type
   # Simple message struct for storage (JSON-compatible)
@@ -177,13 +178,13 @@ proc newSessionManager*(storage: string, maxSessions: int = MAX_SESSION_COUNT): 
           # Remove old session
           try:
             removeFile(file)
-          except:
-            discard
+          except CatchableError as e:
+            warn "Failed to remove old session file", topic = "session", file = file, error = e.msg
           continue
         result.sessions[session.key] = session
       except CatchableError as e:
         # Log error but continue loading other sessions
-        discard
+        warn "Failed to load session file", topic = "session", file = file, error = e.msg
 
 proc validateSessionKey*(key: string): bool =
   ## Validates that a session key is safe to use

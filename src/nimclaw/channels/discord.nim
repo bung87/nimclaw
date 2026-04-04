@@ -132,7 +132,8 @@ method stop*(c: DiscordChannel) {.async.} =
   if c.ws != nil:
     try:
       await c.ws.close()
-    except: discard
+    except CatchableError as e:
+      debug "WebSocket close error", topic = "discord", error = e.msg
     c.ws = nil
   if c.session != nil:
     await c.session.closeWait()

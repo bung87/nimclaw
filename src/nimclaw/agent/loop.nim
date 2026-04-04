@@ -169,14 +169,6 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
   var accumulatedReasoning = ""
   var currentMessages = messages
 
-  proc notifyUpdate(isDone: bool = false) {.raises: [].} =
-    if onUpdate != nil:
-      try:
-        let content = formatWithThinking(accumulatedReasoning, accumulatedContent)
-        onUpdate(content, accumulatedReasoning, isDone)
-      except:
-        discard
-
   while iteration < al.maxIterations:
     iteration += 1
     debug "LLM iteration", topic = "agent", iteration = $iteration, max = $al.maxIterations
@@ -197,7 +189,12 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
           accumulatedContent.add("\n\n")
         accumulatedContent.add(respContent)
       info "LLM response without tool calls", topic = "agent", iteration = $iteration
-      notifyUpdate(isDone = true)
+      if onUpdate != nil:
+        try:
+          let content = formatWithThinking(accumulatedReasoning, accumulatedContent)
+          onUpdate(content, accumulatedReasoning, true)
+        except:
+          discard
       break
 
     # Surface assistant content even when tool calls are present
@@ -206,7 +203,12 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
         accumulatedContent.add("\n\n")
       accumulatedContent.add(response.content.get())
 
-    notifyUpdate(isDone = false)
+    if onUpdate != nil:
+      try:
+        let content = formatWithThinking(accumulatedReasoning, accumulatedContent)
+        onUpdate(content, accumulatedReasoning, false)
+      except:
+        discard
 
     var assistantMsg = providers_types.Message(
       role: mrAssistant,
@@ -237,7 +239,12 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
     # If all tools failed, return error directly to user
     if allToolErrors.len > 0 and allToolErrors.len == response.tool_calls.len:
       accumulatedContent = allToolErrors.join("\n")
-      notifyUpdate(isDone = true)
+      if onUpdate != nil:
+        try:
+          let content = formatWithThinking(accumulatedReasoning, accumulatedContent)
+          onUpdate(content, accumulatedReasoning, true)
+        except:
+          discard
       break
 
   let resultContent = formatWithThinking(accumulatedReasoning, accumulatedContent)

@@ -1,4 +1,4 @@
-import std/os
+import std/[os, times]
 import chronicles
 
 export chronicles
@@ -16,11 +16,15 @@ proc getDefaultLogDir*(): string =
     else:
       getHomeDir() / ".local" / "share" / "nimclaw" / "logs"
 
-# Initialize logger (creates log directory)
-proc initLogger*(logDir: string = "") =
-  let path = if logDir == "": getDefaultLogDir() else: logDir
-  if not dirExists(path):
+# Initialize logger - sets the log file path to OS-specific location
+proc initLogger*() =
+  let logDir = getDefaultLogDir()
+  if not dirExists(logDir):
     try:
-      createDir(path)
+      createDir(logDir)
     except CatchableError:
       discard
+
+  let dateStr = now().format("yyyy-MM-dd")
+  let logFile = logDir / "nimclaw-" & dateStr & ".log"
+  discard defaultChroniclesStream.outputs[0].open(logFile, fmAppend)

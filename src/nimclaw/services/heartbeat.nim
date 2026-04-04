@@ -1,5 +1,6 @@
 import chronos
 import std/[os, times, strutils, locks]
+import ../logger
 
 type
   HeartbeatService* = ref object
@@ -48,8 +49,8 @@ proc log(hs: HeartbeatService, message: string) =
     let f = open(logFile, fmAppend)
     f.writeLine("[$1] $2".format(timestamp, message))
     f.close()
-  except:
-    discard
+  except CatchableError as e:
+    warn "Failed to write heartbeat log", topic = "heartbeat", error = e.msg
 
 proc runLoop(hs: HeartbeatService) {.async.} =
   while hs.running:

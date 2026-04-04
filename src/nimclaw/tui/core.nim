@@ -481,11 +481,10 @@ proc sendMessage(app: TuiApp) {.async.} =
   let assistantMsgIdx = app.messages.len
   app.addMessage("assistant", "")
 
-  # Create callback for incremental updates (optimized)
+  # Callback receives values directly (no closure capture of mutable state)
   let onUpdate = proc(content: string, reasoning: string, isDone: bool) {.gcsafe.} =
     {.gcsafe.}:
       if assistantMsgIdx < app.messages.len:
-        # Use optimized streaming handler instead of just setting needsRedraw
         app.handleStreamingUpdate(assistantMsgIdx, content, reasoning, isDone)
 
   let response = await app.agentLoop.processDirect(userInput, app.sessionKey, onUpdate)

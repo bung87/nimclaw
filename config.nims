@@ -12,19 +12,8 @@ when defined(macosx):
 # Log level: TRACE, DEBUG, INFO, NOTICE, WARN, ERROR, FATAL
 # switch("define", "chronicles_log_level=INFO")
 
-# Output to stdout (console)
-# switch("define", "chronicles_sinks=textlines[stdout]")
-
-# For file logging, use:
-  switch("define", "chronicles_sinks=textlines[file]")
-#   switch("define", "chronicles_file=path/to/nimclaw.log")
-#
-# Or for both console and file:
-#   switch("define", "chronicles_sinks=textlines[stdout],textlines[file]")
-#
-# Log rotation is handled by external tools like logrotate on Linux,
-# or use the nimclaw built-in rotation by setting chronicles_file to a
-# date-based path at startup.
+# Output to file (file path is set at runtime to OS-specific location)
+switch("define", "chronicles_sinks=textlines[file]")
 
 # Timestamp format: RfcTime, RfcUtcTime, UnixTime, or NoTimestamps
 switch("define", "chronicles_timestamps=RfcTime")

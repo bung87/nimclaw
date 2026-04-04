@@ -156,7 +156,8 @@ proc handleTelegramUpdate(c: TelegramChannel, update: JsonNode) {.async.} =
         try:
           let res = await c.transcriber.transcribe(path)
           transcribed = "[voice transcription: $1]".format(res.text)
-        except: discard
+        except CatchableError as e:
+          warn "Voice transcription failed", topic = "telegram", error = e.msg
       if content != "": content.add("\n")
       content.add(transcribed)
 

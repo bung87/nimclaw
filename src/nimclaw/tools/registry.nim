@@ -72,8 +72,8 @@ proc executeWithContext*(r: ToolRegistry, name: string, args: Table[string, Json
   if tool of ContextualTool and channel != "" and chatID != "":
     try:
       (cast[ContextualTool](tool)).setContext(channel, chatID)
-    except CatchableError:
-      discard
+    except CatchableError as e:
+      warn "Failed to set tool context", topic = "tool", tool = name, error = e.msg
 
   let start = now()
   var toolResult = ""

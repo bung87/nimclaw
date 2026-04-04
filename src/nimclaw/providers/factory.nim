@@ -65,7 +65,7 @@ proc createProvider*(cfg: Config): LLMProvider =
     apiBase = if cfg.providers.ollama.api_base != "":
       cfg.providers.ollama.api_base
     else:
-      "http://localhost:11434/v1"
+      "http://127.0.0.1:11434/v1"
 
   else:
     raise newException(ValueError, "unknown provider: " & provider)
