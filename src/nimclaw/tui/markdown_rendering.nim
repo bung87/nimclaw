@@ -487,6 +487,7 @@ const
   CodeBlockBg* = 0x1a1a1a'u32 # Dark background
   LinkFg* = 0x0088FF'u32      # Blue for links
   QuoteFg* = 0xFFAA00'u32     # Yellow for quotes
+  ThinkingFg* = 0x888888'u32  # Grey for thinking section
   QuotePrefix* = "▌ "
   ListBullet* = "• "
   ListNumberWidth* = 4

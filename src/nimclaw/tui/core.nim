@@ -60,6 +60,7 @@ type
   ChatMessage* = object
     role*: string
     content*: string
+    thinking*: string # Reasoning/thinking content (rendered in grey)
     toolCalls*: seq[providers_types.ToolCall]
     expanded*: bool
 
@@ -315,7 +316,7 @@ proc updateCachedMessage(app: TuiApp, msgIdx: int) =
     return
 
   let msg = app.messages[msgIdx]
-  let contentHash = hashContent(msg.content)
+  let contentHash = hashContent(msg.thinking & "\0" & msg.content)
 
   # Check if cache exists and is up to date
   if msgIdx < app.cachedMessages.len:
@@ -341,6 +342,40 @@ proc updateCachedMessage(app: TuiApp, msgIdx: int) =
     indent: 0,
     role: msg.role
   ))
+
+  # Render thinking content (grey/faint)
+  if msg.thinking.len > 0:
+    let thinkingParsed = markdown_rendering.parseMarkdown(msg.thinking)
+    let thinkingLines = markdown_rendering.renderToTerminalLines(thinkingParsed, maxContentWidth - 8, 8)
+
+    # Add "Thinking:" header
+    wrappedLines.add(DisplayLine(
+      text: "💭 Thinking:",
+      fgColor: markdown_rendering.ThinkingFg,
+      bgColor: BG_COLOR_DEFAULT,
+      style: STYLE_FAINT,
+      indent: 6,
+      role: msg.role
+    ))
+
+    for line in thinkingLines:
+      wrappedLines.add(DisplayLine(
+        text: line.text,
+        fgColor: markdown_rendering.ThinkingFg,
+        bgColor: line.bg,
+        style: STYLE_FAINT,
+        indent: line.indent,
+        role: msg.role
+      ))
+    # Empty line after thinking
+    wrappedLines.add(DisplayLine(
+      text: "",
+      fgColor: FG_COLOR_DEFAULT,
+      bgColor: BG_COLOR_DEFAULT,
+      style: STYLE_NONE,
+      indent: 0,
+      role: ""
+    ))
 
   # Parse and render markdown content
   if msg.content.len > 0:
@@ -398,7 +433,7 @@ proc shouldThrottleUpdate(app: TuiApp, content: string): bool =
 
   return false
 
-proc handleStreamingUpdate*(app: TuiApp, msgIdx: int, content: string, reasoning: string, isDone: bool) =
+proc handleStreamingUpdate*(app: TuiApp, msgIdx: int, thinking: string, response: string, isDone: bool) =
   ## Optimized handler for streaming updates from onUpdate callback
 
   # Initialize streaming state if needed
@@ -410,17 +445,19 @@ proc handleStreamingUpdate*(app: TuiApp, msgIdx: int, content: string, reasoning
     app.streaming.lastUpdateTime = getMonoTime()
     app.streaming.updateCount = 0
 
-  # Update the message content
+  # Update the message content (separate thinking and response)
   if msgIdx < app.messages.len:
-    app.messages[msgIdx].content = content
+    app.messages[msgIdx].thinking = thinking
+    app.messages[msgIdx].content = response
 
   # Check if we should process this update or throttle it
-  if not isDone and app.shouldThrottleUpdate(content):
+  let combined = thinking & response
+  if not isDone and app.shouldThrottleUpdate(combined):
     return # Skip this update, wait for next
   
   # Update streaming state
-  app.streaming.lastContent = content
-  app.streaming.lastContentLen = content.len
+  app.streaming.lastContent = combined
+  app.streaming.lastContentLen = combined.len
   app.streaming.lastUpdateTime = getMonoTime()
   app.streaming.updateCount += 1
 
@@ -481,11 +518,11 @@ proc sendMessage(app: TuiApp) {.async.} =
   let assistantMsgIdx = app.messages.len
   app.addMessage("assistant", "")
 
-  # Callback receives values directly (no closure capture of mutable state)
-  let onUpdate = proc(content: string, reasoning: string, isDone: bool) {.gcsafe.} =
+  # Callback receives thinking and response separately for proper styling
+  let onUpdate = proc(thinking: string, response: string, isDone: bool) {.gcsafe.} =
     {.gcsafe.}:
       if assistantMsgIdx < app.messages.len:
-        app.handleStreamingUpdate(assistantMsgIdx, content, reasoning, isDone)
+        app.handleStreamingUpdate(assistantMsgIdx, thinking, response, isDone)
 
   let response = await app.agentLoop.processDirect(userInput, app.sessionKey, onUpdate)
 

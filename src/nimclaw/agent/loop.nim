@@ -159,7 +159,7 @@ proc maybeSummarize(al: AgentLoop, sessionKey: string) =
     release(al.summarizingLock)
 
 type
-  ContentUpdateCallback* = proc(content: string, reasoning: string, isDone: bool) {.gcsafe.}
+  ContentUpdateCallback* = proc(thinking: string, response: string, isDone: bool) {.gcsafe.}
 
 proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts: ProcessOptions,
     onUpdate: ContentUpdateCallback = nil): Future[(string, int,
@@ -191,8 +191,7 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
       info "LLM response without tool calls", topic = "agent", iteration = $iteration
       if onUpdate != nil:
         try:
-          let content = formatWithThinking(accumulatedReasoning, accumulatedContent)
-          onUpdate(content, accumulatedReasoning, true)
+          onUpdate(accumulatedReasoning, accumulatedContent, true)
         except:
           discard
       break
@@ -205,8 +204,7 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
 
     if onUpdate != nil:
       try:
-        let content = formatWithThinking(accumulatedReasoning, accumulatedContent)
-        onUpdate(content, accumulatedReasoning, false)
+        onUpdate(accumulatedReasoning, accumulatedContent, false)
       except:
         discard
 
@@ -241,8 +239,7 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
       accumulatedContent = allToolErrors.join("\n")
       if onUpdate != nil:
         try:
-          let content = formatWithThinking(accumulatedReasoning, accumulatedContent)
-          onUpdate(content, accumulatedReasoning, true)
+          onUpdate(accumulatedReasoning, accumulatedContent, true)
         except:
           discard
       break
