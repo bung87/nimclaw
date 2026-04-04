@@ -101,6 +101,22 @@ type
   ToolsConfig* = object
     web*: WebToolsConfig
 
+  ContextStrategy* = enum
+    csFullHistory  # Keep all messages until token limit
+    csLastNTurns   # Keep only last N turns
+    csSummarizeOld # Summarize older turns
+
+  ContextStrategyConfig* = object
+    strategy*: ContextStrategy
+    maxTurns*: int       # max turns before summarizing
+    keepLastNTurns*: int # verbatim turns to preserve
+    maxTokens*: int      # token budget
+
+  MemoryConfig* = object
+    enabled*: bool
+    maxFacts*: int
+    extractFacts*: bool # auto-extract facts after each turn
+
   Config* = object
     agents*: AgentsConfig
     channels*: ChannelsConfig

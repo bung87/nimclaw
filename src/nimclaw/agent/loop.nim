@@ -6,7 +6,7 @@ import context as agent_context
 import ../checkpoint/manager as checkpoint_manager
 import ../tools/registry as tools_registry
 import ../tools/base as tools_base
-import ../tools/[filesystem, edit, shell, spawn, subagent, web, cron as cron_tool, message, persona]
+import ../tools/[filesystem, edit, shell, spawn, subagent, web, cron as cron_tool, message, persona, fact]
 
 type
   ProcessOptions* = object
@@ -68,6 +68,9 @@ proc newAgentLoop*(cfg: Config, msgBus: MessageBus, provider: LLMProvider): Agen
 
   # Register persona management tool (after contextBuilder is created)
   toolsRegistry.register(newPersonaTool(contextBuilder.personaManager))
+
+  # Register fact management tool
+  toolsRegistry.register(newFactTool(contextBuilder.memory))
 
   let cpManager = checkpoint_manager.newCheckpointManager(workspace)
 
