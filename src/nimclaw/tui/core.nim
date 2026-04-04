@@ -1,4 +1,4 @@
-import std/[strutils, unicode, times, monotimes]
+import std/[strutils, unicode, times, monotimes, osproc, os]
 import std/terminal except showCursor, hideCursor
 import textalot
 import chronos
@@ -37,6 +37,17 @@ type
     lastUpdateTime*: MonoTime
     updateCount*: int
 
+  CommandMenu* = object
+    ## Slash command menu state
+    visible*: bool
+    selectedIndex*: int
+    commands*: seq[CommandItem]
+
+  CommandItem* = object
+    name*: string
+    description*: string
+    fullCmd*: string
+
   TuiApp* = ref object
     running*: bool
     agentLoop*: AgentLoop
@@ -58,6 +69,7 @@ type
     renderCount*: int                   # NEW: Debug counter
     sessionKey*: string                 # Current session key
     sessionCounter*: int                # For generating new session keys
+    cmdMenu*: CommandMenu               # Slash command menu
 
   ChatMessage* = object
     role*: string
@@ -73,6 +85,22 @@ const
   # Throttling for streaming updates
   MinUpdateIntervalMs = 50 # Minimum ms between re-wraps
   MinContentDelta = 10     # Minimum new chars before re-wrap
+
+  # Available slash commands
+  SlashCommands = [
+    CommandItem(name: "new", description: "Start a new session", fullCmd: "/new"),
+    CommandItem(name: "persona list", description: "List all personas", fullCmd: "/persona list"),
+    CommandItem(name: "persona switch", description: "Switch to a persona (you'll type the name)",
+        fullCmd: "/persona switch "),
+    CommandItem(name: "persona create", description: "Create new persona (you'll type the name)",
+        fullCmd: "/persona create "),
+    CommandItem(name: "persona edit", description: "Edit a persona in external editor",
+        fullCmd: "/persona edit "),
+    CommandItem(name: "quit", description: "Exit nimclaw", fullCmd: "/quit"),
+    CommandItem(name: "exit", description: "Exit nimclaw", fullCmd: "/exit"),
+    CommandItem(name: "clear", description: "Clear the screen", fullCmd: "/clear"),
+    CommandItem(name: "undo", description: "Undo last turn", fullCmd: "(Ctrl+U)")
+  ]
 
 proc readEventGcsafe(): Event =
   {.gcsafe.}:
@@ -166,6 +194,48 @@ proc updateVisualInput(app: TuiApp) =
 
     app.visualInput = res
     app.visualCursorX = cursorRunes - startRunePos
+
+# Command Menu Functions
+
+proc showCommandMenu(app: TuiApp) =
+  ## Show the slash command menu
+  app.cmdMenu.visible = true
+  app.cmdMenu.selectedIndex = 0
+  app.cmdMenu.commands = @SlashCommands
+  app.needsRedraw = true
+
+proc hideCommandMenu(app: TuiApp) =
+  ## Hide the command menu
+  app.cmdMenu.visible = false
+  app.cmdMenu.selectedIndex = 0
+  app.needsRedraw = true
+
+proc selectNextCommand(app: TuiApp) =
+  ## Move selection down
+  if app.cmdMenu.commands.len > 0:
+    app.cmdMenu.selectedIndex = (app.cmdMenu.selectedIndex + 1) mod app.cmdMenu.commands.len
+    app.needsRedraw = true
+
+proc selectPrevCommand(app: TuiApp) =
+  ## Move selection up
+  if app.cmdMenu.commands.len > 0:
+    app.cmdMenu.selectedIndex = (app.cmdMenu.selectedIndex - 1 + app.cmdMenu.commands.len) mod app.cmdMenu.commands.len
+    app.needsRedraw = true
+
+proc sendMessage(app: TuiApp) {.async.}
+
+proc executeSelectedCommand(app: TuiApp) {.async.} =
+  ## Execute the selected command
+  if app.cmdMenu.selectedIndex < app.cmdMenu.commands.len:
+    let cmd = app.cmdMenu.commands[app.cmdMenu.selectedIndex]
+    app.inputBuffer = cmd.fullCmd
+    app.cursorX = app.inputBuffer.len
+    app.updateVisualInput()
+    app.hideCommandMenu()
+
+    # Auto-execute certain commands
+    if cmd.name in ["new", "quit", "exit", "clear"]:
+      await app.sendMessage()
 
 proc runeDisplayWidth(r: Rune): int =
   ## Approximate terminal display width for a rune.
@@ -598,6 +668,42 @@ proc handlePersonaCommand(app: TuiApp, input: string) {.async.} =
         except persona_manager.PersonaError as e:
           app.addMessage("system", "Error: " & e.msg)
 
+    of "edit":
+      if parts.len < 3:
+        app.addMessage("system", "Usage: /persona edit <name>")
+      else:
+        let name = parts[2]
+        try:
+          let persona = pm.loadPersona(name)
+          let personaDir = pm.personasDir / persona.slug
+
+          # Try $EDITOR first, then fall back to platform default
+          let editor = getEnv("EDITOR", "")
+          var cmd = ""
+
+          if editor != "":
+            # Use user's preferred editor
+            cmd = editor & " \"" & personaDir & "\""
+            app.addMessage("system", "Opening " & persona.name & " persona in " & editor & "...")
+          else:
+            # Use platform default application
+            when defined(macosx):
+              cmd = "open \"" & personaDir & "\""
+            elif defined(windows):
+              cmd = "start \"\" \"" & personaDir & "\""
+            else:
+              # Linux and other Unix
+              cmd = "xdg-open \"" & personaDir & "\""
+            app.addMessage("system", "Opening " & persona.name & " persona...")
+
+          # Run in background so TUI isn't blocked
+          when defined(windows):
+            discard startProcess("cmd", args = ["/c", cmd], options = {poDaemon})
+          else:
+            discard startProcess("sh", args = ["-c", cmd], options = {poDaemon})
+        except persona_manager.PersonaError as e:
+          app.addMessage("system", "Error: " & e.msg)
+
     else:
       app.addMessage("system", "Unknown persona command: " & cmd & ". Type /persona for help.")
 
@@ -632,6 +738,37 @@ proc sendMessage(app: TuiApp) {.async.} =
   # Handle /persona commands
   if userInput.startsWith("/persona"):
     await app.handlePersonaCommand(userInput)
+    return
+
+  # Handle /clear command
+  if userInput.strip() == "/clear":
+    app.messages = @[]
+    app.cachedMessages = @[]
+    app.scrollOffset = 0
+    app.needsFullRedraw = true
+    app.needsRedraw = true
+    app.inputBuffer = ""
+    app.cursorX = 0
+    app.updateVisualInput()
+    return
+
+  # Handle /undo command
+  if userInput.strip() == "/undo":
+    if not app.isGenerating:
+      let popped = app.agentLoop.sessions.popRecord(app.sessionKey, 2)
+      if popped.len > 0:
+        # Remove last user message from UI
+        if app.messages.len >= 2:
+          app.messages.setLen(app.messages.len - 2)
+          app.cachedMessages.setLen(app.cachedMessages.len - 2)
+        app.addMessage("system", "Undid last turn (" & $popped.len & " messages)")
+      else:
+        app.addMessage("system", "Nothing to undo")
+      app.needsFullRedraw = true
+      app.needsRedraw = true
+    app.inputBuffer = ""
+    app.cursorX = 0
+    app.updateVisualInput()
     return
 
   app.addMessage("user", userInput)
@@ -740,7 +877,7 @@ proc lastNewlineRunePos(s: string, upToRunePos: int): int =
     runePos.inc
   result = last
 
-proc handleEvent(app: TuiApp, ev: Event) =
+proc handleEvent(app: TuiApp, ev: Event) {.async.} =
   if ev of KeyEvent:
     let kev = cast[KeyEvent](ev)
     let key = kev.key
@@ -750,6 +887,25 @@ proc handleEvent(app: TuiApp, ev: Event) =
       if app.ctrlDHintVisible:
         app.ctrlDHintVisible = false
         app.needsRedraw = true
+
+    # Handle command menu navigation when visible
+    if app.cmdMenu.visible:
+      case key
+      of EVENT_KEY_ESC:
+        app.hideCommandMenu()
+        return
+      of EVENT_KEY_ENTER:
+        await app.executeSelectedCommand()
+        return
+      of EVENT_KEY_ARROW_UP:
+        app.selectPrevCommand()
+        return
+      of EVENT_KEY_ARROW_DOWN:
+        app.selectNextCommand()
+        return
+      else:
+        # Hide menu on any other key, but still process the key
+        app.hideCommandMenu()
 
     case key
     of EVENT_KEY_ESC:
@@ -857,10 +1013,17 @@ proc handleEvent(app: TuiApp, ev: Event) =
       # Handle printable characters (ASCII + Unicode)
       if key >= 0x20 and key <= 0x10FFFF'u32:
         let c = Rune(key.int).toUTF8()
-        app.inputBuffer.insert(c, app.cursorX)
-        app.cursorX += c.len
-        app.updateVisualInput()
-        app.needsRedraw = true
+        # Check if this is '/' at start of empty input -> show command menu
+        if c == "/" and app.inputBuffer.len == 0 and app.cursorX == 0:
+          app.inputBuffer.insert(c, app.cursorX)
+          app.cursorX += c.len
+          app.updateVisualInput()
+          app.showCommandMenu()
+        else:
+          app.inputBuffer.insert(c, app.cursorX)
+          app.cursorX += c.len
+          app.updateVisualInput()
+          app.needsRedraw = true
 
   elif ev of MouseEvent:
     let mev = cast[MouseEvent](ev)
@@ -1000,6 +1163,64 @@ proc renderInput(app: TuiApp) =
     if y < h - 1:
       drawTextWide(line, InputStartX, y, FG_COLOR_DEFAULT, BG_COLOR_DEFAULT, STYLE_NONE)
 
+proc renderCommandMenu(app: TuiApp) =
+  ## Render the slash command menu
+  if not app.cmdMenu.visible: return
+
+  let w = getTerminalWidth()
+  let h = getTerminalHeight()
+
+  # Menu dimensions
+  let menuWidth = min(60, w - 4)
+  let itemCount = app.cmdMenu.commands.len
+  let menuHeight = min(itemCount + 2, h div 2) # +2 for border, max half screen
+  let menuX = max(2, (w - menuWidth) div 2)
+  let menuY = max(2, h - menuHeight - 5) # Position above input area
+
+  # Draw menu background/border
+  drawRectangle(menuX, menuY, menuX + menuWidth, menuY + menuHeight, BG_COLOR_DEFAULT, FG_COLOR_DEFAULT, " ", STYLE_NONE)
+
+  # Menu title
+  let title = " Commands "
+  let titleX = menuX + (menuWidth - title.len) div 2
+  drawTextWide(title, titleX, menuY, FG_COLOR_CYAN, BG_COLOR_DEFAULT, STYLE_BOLD)
+  drawTextWide("┌" & "─".repeat(menuWidth - 2) & "┐", menuX, menuY, FG_COLOR_DEFAULT, BG_COLOR_DEFAULT, STYLE_FAINT)
+  drawTextWide("└" & "─".repeat(menuWidth - 2) & "┘", menuX, menuY + menuHeight - 1, FG_COLOR_DEFAULT,
+      BG_COLOR_DEFAULT, STYLE_FAINT)
+
+  # Draw commands
+  let visibleItems = min(itemCount, menuHeight - 2)
+  let startIdx = max(0, min(app.cmdMenu.selectedIndex - visibleItems div 2, itemCount - visibleItems))
+
+  for i in 0..<visibleItems:
+    let cmdIdx = startIdx + i
+    if cmdIdx >= itemCount: break
+
+    let cmd = app.cmdMenu.commands[cmdIdx]
+    let y = menuY + 1 + i
+    let isSelected = cmdIdx == app.cmdMenu.selectedIndex
+
+    # Clear line
+    drawTextWide(" ".repeat(menuWidth - 2), menuX + 1, y, FG_COLOR_DEFAULT, BG_COLOR_DEFAULT, STYLE_NONE)
+
+    if isSelected:
+      # Highlight selected item
+      drawTextWide(" ".repeat(menuWidth - 2), menuX + 1, y, FG_COLOR_DEFAULT, FG_COLOR_CYAN, STYLE_NONE)
+      drawTextWide("▶ " & cmd.fullCmd, menuX + 2, y, FG_COLOR_BLACK, FG_COLOR_CYAN, STYLE_BOLD)
+      # Description on the right (truncated if needed)
+      let descMaxLen = menuWidth - cmd.fullCmd.len - 8
+      if descMaxLen > 5:
+        let desc = if cmd.description.len > descMaxLen: cmd.description[0..<descMaxLen] & "..." else: cmd.description
+        drawTextWide(desc, menuX + menuWidth - desc.len - 2, y, FG_COLOR_BLACK, FG_COLOR_CYAN, STYLE_NONE)
+    else:
+      # Normal item
+      drawTextWide("  " & cmd.fullCmd, menuX + 2, y, FG_COLOR_DEFAULT, BG_COLOR_DEFAULT, STYLE_NONE)
+      # Description (dim)
+      let descMaxLen = menuWidth - cmd.fullCmd.len - 8
+      if descMaxLen > 5:
+        let desc = if cmd.description.len > descMaxLen: cmd.description[0..<descMaxLen] & "..." else: cmd.description
+        drawTextWide(desc, menuX + menuWidth - desc.len - 2, y, FG_COLOR_DEFAULT, BG_COLOR_DEFAULT, STYLE_FAINT)
+
 proc positionCursor(app: TuiApp) =
   let w = getTerminalWidth()
   let h = getTerminalHeight()
@@ -1032,6 +1253,7 @@ proc render*(app: TuiApp) =
     app.renderHeader()
     app.renderChatIncremental() # Use incremental rendering
     app.renderInput()
+    app.renderCommandMenu() # Render command menu if visible
     texalotRender()
     app.positionCursor()
 
@@ -1047,7 +1269,7 @@ proc run*(app: TuiApp) {.async.} =
 
   while app.running:
     let ev = readEventGcsafe()
-    app.handleEvent(ev)
+    await app.handleEvent(ev)
 
     if app.needsRedraw:
       app.render()
