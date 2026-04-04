@@ -70,29 +70,29 @@ proc handleList(t: PersonaTool): Future[string] {.async.} =
   if personas.len == 0:
     return "No personas found. Use 'create' to make one."
 
-  var result = "Available personas:\n"
+  var output = "Available personas:\n"
   for slug in personas:
     let summary = t.personaManager.getPersonaSummary(slug)
-    result.add("- " & summary & "\n")
+    output.add("- " & summary & "\n")
 
-  return result
+  return output
 
 proc handleGet(t: PersonaTool, name: string): Future[string] {.async.} =
   try:
     let persona = t.personaManager.loadPersona(name)
-    var result = "Persona: $1 (slug: $2)\n".format(persona.name, persona.slug)
-    result.add("=".repeat(40) & "\n\n")
+    var output = "Persona: $1 (slug: $2)\n".format(persona.name, persona.slug)
+    output.add("=".repeat(40) & "\n\n")
 
     if persona.soul.len > 0:
-      result.add("## SOUL\n" & persona.soul[0..min(200, persona.soul.len-1)] & "...\n\n")
+      output.add("## SOUL\n" & persona.soul[0..min(200, persona.soul.len-1)] & "...\n\n")
 
     if persona.identity.len > 0:
-      result.add("## IDENTITY\n" & persona.identity[0..min(200, persona.identity.len-1)] & "...\n\n")
+      output.add("## IDENTITY\n" & persona.identity[0..min(200, persona.identity.len-1)] & "...\n\n")
 
     if persona.metadata.model.len > 0:
-      result.add("Model override: " & persona.metadata.model & "\n")
+      output.add("Model override: " & persona.metadata.model & "\n")
 
-    return result
+    return output
   except pm.PersonaError as e:
     return "Error: " & e.msg
 

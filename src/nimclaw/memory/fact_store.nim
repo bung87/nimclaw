@@ -3,7 +3,7 @@
 ## Stores user preferences and facts extracted from conversations.
 ## Simple JSONL-based implementation (Phase 3.1)
 
-import std/[os, times, json, tables, strutils, options, sequtils, algorithm]
+import std/[os, times, json, strutils, options, sequtils, algorithm]
 import ../logger
 
 type
