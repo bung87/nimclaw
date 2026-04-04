@@ -6,6 +6,7 @@ import ../providers/types as providers_types
 import ../agent/loop
 import ../config
 import ../persona/manager as persona_manager
+import ../session
 import markdown_rendering
 
 type
@@ -838,6 +839,19 @@ proc handleEvent(app: TuiApp, ev: Event) =
     of EVENT_KEY_CTRL_T:
       # Toggle tool panel (placeholder)
       discard
+
+    of EVENT_KEY_CTRL_U:
+      # Undo last turn (pop last 2 records: assistant + user)
+      if not app.isGenerating:
+        let popped = app.agentLoop.sessions.popRecord(app.sessionKey, 2)
+        if popped.len > 0:
+          # Remove last user message from UI
+          if app.messages.len >= 2:
+            app.messages.setLen(app.messages.len - 2)
+            app.cachedMessages.setLen(app.cachedMessages.len - 2)
+          app.addMessage("system", "Undid last turn (" & $popped.len & " messages)")
+          app.needsFullRedraw = true
+          app.needsRedraw = true
 
     else:
       # Handle printable characters (ASCII + Unicode)
