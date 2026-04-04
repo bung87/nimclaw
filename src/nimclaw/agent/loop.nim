@@ -1,8 +1,9 @@
 import chronos
-import std/[os, json, strutils, tables, locks, options]
+import std/[os, json, strutils, tables, locks, options, times]
 import ../bus, ../bus_types, ../config, ../logger, ../providers/types as providers_types,
     ../providers/adapters as providers_adapters, ../session, ../utils
 import context as agent_context
+import ../checkpoint/manager as checkpoint_manager
 import ../tools/registry as tools_registry
 import ../tools/base as tools_base
 import ../tools/[filesystem, edit, shell, spawn, subagent, web, cron as cron_tool, message, persona]
@@ -27,6 +28,8 @@ type
     sessions*: SessionManager
     contextBuilder*: ContextBuilder
     tools*: ToolRegistry
+    checkpointManager*: checkpoint_manager.CheckpointManager
+    currentTurn*: Table[string, int] # sessionKey -> turn number
     running*: bool
     summarizing*: Table[string, bool]
     summarizingLock*: Lock
@@ -66,6 +69,8 @@ proc newAgentLoop*(cfg: Config, msgBus: MessageBus, provider: LLMProvider): Agen
   # Register persona management tool (after contextBuilder is created)
   toolsRegistry.register(newPersonaTool(contextBuilder.personaManager))
 
+  let cpManager = checkpoint_manager.newCheckpointManager(workspace)
+
   var al = AgentLoop(
     bus: msgBus,
     provider: provider,
@@ -76,6 +81,8 @@ proc newAgentLoop*(cfg: Config, msgBus: MessageBus, provider: LLMProvider): Agen
     sessions: sessionsManager,
     contextBuilder: contextBuilder,
     tools: toolsRegistry,
+    checkpointManager: cpManager,
+    currentTurn: initTable[string, int](),
     running: false,
     summarizing: initTable[string, bool]()
   )
@@ -219,6 +226,25 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
     currentMessages.add(assistantMsg)
     al.sessions.addFullMessage(opts.sessionKey, assistantMsg)
 
+    # Save checkpoint before executing tools (for crash recovery)
+    if response.tool_calls.len > 0:
+      let turn = al.currentTurn.getOrDefault(opts.sessionKey, 0)
+      let checkpoint = checkpoint_manager.Checkpoint(
+        sessionKey: opts.sessionKey,
+        iteration: iteration,
+        turn: turn,
+        messages: currentMessages,
+        pendingToolCalls: response.tool_calls,
+        accumulatedContent: accumulatedContent,
+        accumulatedReasoning: accumulatedReasoning,
+        createdAt: getTime().toUnix()
+      )
+      try:
+        al.checkpointManager.save(checkpoint)
+        debug "Saved checkpoint", session = opts.sessionKey, turn = turn, iteration = iteration
+      except CatchableError as e:
+        warn "Failed to save checkpoint", error = e.msg
+
     var allToolErrors: seq[string] = @[]
     for tc in response.tool_calls:
       if tc.name == "":
@@ -248,9 +274,73 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
       break
 
   let resultContent = formatWithThinking(accumulatedReasoning, accumulatedContent)
+
+  # Clean up checkpoints on successful completion
+  if iteration < al.maxIterations:
+    let turn = al.currentTurn.getOrDefault(opts.sessionKey, 0)
+    al.checkpointManager.deleteAll(opts.sessionKey)
+    debug "Cleaned up checkpoints", session = opts.sessionKey
+
   return (resultContent, iteration, currentMessages)
 
+proc resumeFromCheckpoint*(al: AgentLoop, sessionKey: string): Future[bool] {.async.} =
+  ## Resume agent loop from a checkpoint
+  ## Returns true if successfully resumed
+
+  if not al.checkpointManager.hasCheckpoints(sessionKey):
+    return false
+
+  try:
+    var checkpoint = al.checkpointManager.loadLatest(sessionKey)
+    info "Resuming from checkpoint", session = sessionKey, turn = checkpoint.turn, iteration = checkpoint.iteration
+
+    # Restore state
+    al.currentTurn[sessionKey] = checkpoint.turn
+
+    # Re-execute pending tool calls
+    var allToolErrors: seq[string] = @[]
+    var currentMessages = checkpoint.messages
+    for tc in checkpoint.pendingToolCalls:
+      info "Re-executing tool from checkpoint", name = tc.name
+      let toolResult = await al.tools.executeWithContext(tc.name, tc.arguments, "", "")
+      if toolResult.startsWith("Error: "):
+        allToolErrors.add(tc.name & ": " & toolResult)
+
+      let toolResultMsg = providers_types.Message(
+        role: mrTool,
+        content: some(toolResult),
+        toolCallId: some(tc.id),
+        name: some(tc.name)
+      )
+      currentMessages.add(toolResultMsg)
+      al.sessions.addFullMessage(sessionKey, toolResultMsg)
+
+    # Continue from where we left off
+    let opts = ProcessOptions(
+      sessionKey: sessionKey,
+      channel: "",
+      chatID: "",
+      userMessage: "",
+      defaultResponse: "",
+      enableSummary: true,
+      sendResponse: false
+    )
+
+    # Create a new messages sequence starting from checkpoint
+    let (_, finalIteration, _) = await al.runLLMIteration(currentMessages, opts, nil)
+
+    info "Resumed session completed", session = sessionKey, iterations = finalIteration
+    return true
+
+  except CatchableError as e:
+    warn "Failed to resume from checkpoint", session = sessionKey, error = e.msg
+    return false
+
 proc runAgentLoop*(al: AgentLoop, opts: ProcessOptions): Future[string] {.async.} =
+  # Increment turn counter for this session
+  let currentTurn = al.currentTurn.getOrDefault(opts.sessionKey, 0)
+  al.currentTurn[opts.sessionKey] = currentTurn + 1
+
   let history = al.sessions.getHistory(opts.sessionKey)
   let summary = al.sessions.getSummary(opts.sessionKey)
   var messages: seq[providers_types.Message] = @[]
