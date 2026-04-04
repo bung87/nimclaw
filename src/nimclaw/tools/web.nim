@@ -3,7 +3,7 @@ import puppy
 import std/[json, tables, strutils, uri]
 import pkg/regex except re
 import types
-import search_providers/[base, brave, searxng]
+import search_providers/[base, brave, searxng, exa]
 import ../config
 
 type
@@ -42,6 +42,8 @@ proc buildProviders(cfg: WebSearchConfig): Table[string, SearchProvider] =
       result[pc.name] = newBraveProvider(pc.api_key)
     of "searxng":
       result[pc.name] = newSearXNGProvider(pc.base_url)
+    of "exa":
+      result[pc.name] = newExaProvider(pc.api_key)
     else:
       discard
 

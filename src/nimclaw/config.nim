@@ -175,6 +175,10 @@ proc parseEnv*(cfg: var Config) =
   if existsEnv("NIMCLAW_AGENTS_DEFAULTS_MODEL"): cfg.agents.defaults.model = getEnv("NIMCLAW_AGENTS_DEFAULTS_MODEL")
   if existsEnv("NIMCLAW_AGENTS_DEFAULTS_PROVIDER"): cfg.agents.defaults.provider = getEnv("NIMCLAW_AGENTS_DEFAULTS_PROVIDER")
   if existsEnv("BRAVE_API_KEY"): cfg.tools.web.search.api_key = getEnv("BRAVE_API_KEY")
+  if existsEnv("EXA_API_KEY"):
+    cfg.tools.web.search.providers.add(SearchProviderConfig(name: "exa", api_key: getEnv("EXA_API_KEY"), enabled: true))
+    if "exa" notin cfg.tools.web.search.fallback_order:
+      cfg.tools.web.search.fallback_order.add("exa")
 
 proc loadConfig*(path: string): Config =
   result = defaultConfig()
