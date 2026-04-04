@@ -5,6 +5,7 @@ import chronos
 import ../providers/types as providers_types
 import ../agent/loop
 import ../config
+import ../persona/manager as persona_manager
 import markdown_rendering
 
 type
@@ -484,6 +485,127 @@ proc addMessage(app: TuiApp, role, content: string, toolCalls: seq[providers_typ
   app.needsFullRedraw = true
   app.needsRedraw = true
 
+proc handlePersonaCommand(app: TuiApp, input: string) {.async.} =
+  ## Handle /persona commands
+  let parts = strutils.splitWhitespace(input)
+  let cmd = if parts.len > 1: parts[1].toLowerAscii() else: ""
+
+  let pm = app.agentLoop.contextBuilder.personaManager
+
+  case cmd:
+    of "", "help":
+      let helpText = """Persona commands:
+/persona - Show active persona
+/persona list - List all personas
+/persona switch <name> - Switch to persona
+/persona create <name> - Create new persona (interactive)
+/persona show <name> - Show persona details
+/persona delete <name> - Delete a persona"""
+      app.addMessage("system", helpText)
+
+    of "list":
+      let personas = pm.listPersonas()
+      if personas.len == 0:
+        app.addMessage("system", "No personas found. Use '/persona create <name>' to create one.")
+      else:
+        var listText = "Available personas:\n"
+        let active = pm.getActivePersona(app.sessionKey)
+        for slug in personas:
+          let marker = if slug == active.slug: " [active]" else: ""
+          listText.add("- " & slug & marker & "\n")
+        app.addMessage("system", listText)
+
+    of "switch":
+      if parts.len < 3:
+        app.addMessage("system", "Usage: /persona switch <name>")
+      else:
+        let name = parts[2]
+        try:
+          pm.setActivePersona(app.sessionKey, name)
+          let persona = pm.loadPersona(name)
+          app.addMessage("system", "Switched to persona: " & persona.name)
+        except persona_manager.PersonaError as e:
+          app.addMessage("system", "Error: " & e.msg)
+
+    of "create":
+      if parts.len < 3:
+        app.addMessage("system", "Usage: /persona create <name>")
+      else:
+        let name = parts[2..^1].join(" ")
+        let lowerName: string = name.toLowerAscii()
+        var slug = strutils.splitWhitespace(lowerName).join("-")
+        # Remove non-alphanumeric characters (except hyphen)
+        var cleanSlug = ""
+        for c in slug:
+          if c in {'a'..'z', '0'..'9', '-'}:
+            cleanSlug.add(c)
+        slug = cleanSlug
+
+        if pm.personaExists(slug):
+          app.addMessage("system", "Persona '" & slug & "' already exists.")
+          return
+
+        # Create basic persona
+        let persona = persona_manager.Persona(
+          name: name,
+          slug: slug,
+          soul: "# Soul\n\nI am " & name & ", a helpful AI assistant.\n\n## Personality\n- Helpful and efficient\n- Clear communication\n",
+          identity: "# Identity\n\nName: " & name & "\nRole: AI Assistant\n",
+          agents: "# Agent Instructions\n\nYou are a helpful AI assistant.",
+          user: "",
+          metadata: persona_manager.PersonaMetadata(
+            temperature: 0.7,
+            createdAt: getTime().toUnix(),
+            updatedAt: getTime().toUnix()
+          )
+        )
+
+        try:
+          pm.savePersona(persona)
+          app.addMessage("system", "Created persona: " & name & " (slug: " & slug & ")")
+          app.addMessage("system", "Edit files in ~/.nimclaw/workspace/personas/" & slug & "/ to customize.")
+        except CatchableError as e:
+          app.addMessage("system", "Error creating persona: " & e.msg)
+
+    of "show", "get":
+      if parts.len < 3:
+        app.addMessage("system", "Usage: /persona show <name>")
+      else:
+        let name = parts[2]
+        try:
+          let persona = pm.loadPersona(name)
+          var info = "Persona: " & persona.name & " (" & persona.slug & ")\n"
+          if persona.metadata.model.len > 0:
+            info.add("Model: " & persona.metadata.model & "\n")
+          info.add("Temperature: " & $persona.metadata.temperature & "\n")
+          info.add("\nFiles:\n")
+          info.add("- SOUL.md: " & (if persona.soul.len > 0: $persona.soul.len & " chars" else: "empty") & "\n")
+          info.add("- IDENTITY.md: " & (if persona.identity.len > 0: $persona.identity.len & " chars" else: "empty") & "\n")
+          info.add("- AGENTS.md: " & (if persona.agents.len > 0: $persona.agents.len & " chars" else: "empty") & "\n")
+          app.addMessage("system", info)
+        except persona_manager.PersonaError as e:
+          app.addMessage("system", "Error: " & e.msg)
+
+    of "delete":
+      if parts.len < 3:
+        app.addMessage("system", "Usage: /persona delete <name>")
+      else:
+        let name = parts[2]
+        try:
+          pm.deletePersona(name)
+          app.addMessage("system", "Deleted persona: " & name)
+        except persona_manager.PersonaError as e:
+          app.addMessage("system", "Error: " & e.msg)
+
+    else:
+      app.addMessage("system", "Unknown persona command: " & cmd & ". Type /persona for help.")
+
+  app.inputBuffer = ""
+  app.cursorX = 0
+  app.updateVisualInput()
+  app.needsFullRedraw = true
+  app.needsRedraw = true
+
 proc sendMessage(app: TuiApp) {.async.} =
   let userInput = app.inputBuffer.strip()
   if userInput.len == 0: return
@@ -504,6 +626,11 @@ proc sendMessage(app: TuiApp) {.async.} =
     app.updateVisualInput()
     app.needsFullRedraw = true
     app.needsRedraw = true
+    return
+
+  # Handle /persona commands
+  if userInput.startsWith("/persona"):
+    await app.handlePersonaCommand(userInput)
     return
 
   app.addMessage("user", userInput)
