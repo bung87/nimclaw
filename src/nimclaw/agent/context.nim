@@ -87,7 +87,9 @@ $4
 
 3. **Be helpful and accurate** - When using tools, briefly explain what you're doing.
 
-4. **Memory** - When remembering something, write to $3/memory/MEMORY.md""".format(now, runtime, workspacePath, toolsSection)
+4. **CONTINUE AUTONOMOUSLY** - When you receive tool results, analyze them and proceed with the next step immediately. DO NOT ask the user "Would you like me to...?" or "Should I...?". Just DO IT. Keep working until the task is complete.
+
+5. **Memory** - When remembering something, write to $3/memory/MEMORY.md""".format(now, runtime, workspacePath, toolsSection)
 
 proc loadPersonaFiles(cb: ContextBuilder, sessionKey: string = ""): string =
   ## Load persona files from active persona for session
