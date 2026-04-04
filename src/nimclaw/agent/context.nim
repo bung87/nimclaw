@@ -2,6 +2,7 @@ import std/[os, times, strutils, sequtils, tables, json, options]
 import ../providers/types as providers_types
 import ../skills/loader as skills_loader
 import ../tools/registry as tools_registry
+import ../persona/manager as persona_manager
 import memory
 
 type
@@ -10,6 +11,7 @@ type
     skillsLoader*: SkillsLoader
     memory*: MemoryStore
     tools*: ToolRegistry
+    personaManager*: persona_manager.PersonaManager
 
 proc getGlobalConfigDir(): string =
   getHomeDir() / ".nimclaw"
@@ -18,11 +20,17 @@ proc newContextBuilder*(workspace: string): ContextBuilder =
   let wd = getCurrentDir()
   let builtinSkillsDir = wd / "skills"
   let globalSkillsDir = getGlobalConfigDir() / "skills"
+  let pm = persona_manager.newPersonaManager(workspace)
+
+  # Migrate legacy personas and ensure default exists
+  pm.migrateLegacyPersonas(workspace)
+  pm.createDefaultPersona()
 
   ContextBuilder(
     workspace: workspace,
     skillsLoader: newSkillsLoader(workspace, globalSkillsDir, builtinSkillsDir),
-    memory: newMemoryStore(workspace)
+    memory: newMemoryStore(workspace),
+    personaManager: pm
   )
 
 proc setToolsRegistry*(cb: ContextBuilder, registry: ToolRegistry) =
@@ -81,22 +89,37 @@ $4
 
 4. **Memory** - When remembering something, write to $3/memory/MEMORY.md""".format(now, runtime, workspacePath, toolsSection)
 
-proc loadBootstrapFiles(cb: ContextBuilder): string =
-  let bootstrapFiles = ["AGENTS.md", "SOUL.md", "USER.md", "IDENTITY.md"]
+proc loadPersonaFiles(cb: ContextBuilder, sessionKey: string = ""): string =
+  ## Load persona files from active persona for session
+  let persona = cb.personaManager.getActivePersona(sessionKey)
+
   var content = ""
-  for filename in bootstrapFiles:
-    let filePath = cb.workspace / filename
-    if fileExists(filePath):
-      content.add("## $1\n\n$2\n\n".format(filename, readFile(filePath)))
+  if persona.soul.len > 0:
+    content.add("## SOUL.md\n\n" & persona.soul & "\n\n")
+  if persona.identity.len > 0:
+    content.add("## IDENTITY.md\n\n" & persona.identity & "\n\n")
+  if persona.agents.len > 0:
+    content.add("## AGENTS.md\n\n" & persona.agents & "\n\n")
+  if persona.user.len > 0:
+    content.add("## USER.md\n\n" & persona.user & "\n\n")
+
+  # Fallback to legacy files if persona is empty
+  if content.len == 0:
+    let bootstrapFiles = ["AGENTS.md", "SOUL.md", "USER.md", "IDENTITY.md"]
+    for filename in bootstrapFiles:
+      let filePath = cb.workspace / filename
+      if fileExists(filePath):
+        content.add("## $1\n\n$2\n\n".format(filename, readFile(filePath)))
+
   return content
 
-proc buildSystemPrompt*(cb: ContextBuilder): string =
+proc buildSystemPrompt*(cb: ContextBuilder, sessionKey: string = ""): string =
   var parts: seq[string] = @[]
   parts.add(cb.getIdentity())
 
-  let bootstrapContent = cb.loadBootstrapFiles()
-  if bootstrapContent != "":
-    parts.add(bootstrapContent)
+  let personaContent = cb.loadPersonaFiles(sessionKey)
+  if personaContent != "":
+    parts.add(personaContent)
 
   let skillsSummary = cb.skillsLoader.buildSkillsSummary()
   if skillsSummary != "":
@@ -113,8 +136,8 @@ $1""".format(skillsSummary))
   return parts.join("\n\n---\n\n")
 
 proc buildMessages*(cb: ContextBuilder, history: seq[providers_types.Message], summary: string, currentMessage: string,
-    channel, chatID: string): seq[providers_types.Message] =
-  var systemPrompt = cb.buildSystemPrompt()
+    channel, chatID: string, sessionKey: string = ""): seq[providers_types.Message] =
+  var systemPrompt = cb.buildSystemPrompt(sessionKey)
   if channel != "" and chatID != "":
     systemPrompt.add("\n\n## Current Session\nChannel: $1\nChat ID: $2".format(channel, chatID))
 

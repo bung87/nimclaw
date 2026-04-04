@@ -5,7 +5,7 @@ import ../bus, ../bus_types, ../config, ../logger, ../providers/types as provide
 import context as agent_context
 import ../tools/registry as tools_registry
 import ../tools/base as tools_base
-import ../tools/[filesystem, edit, shell, spawn, subagent, web, cron as cron_tool, message]
+import ../tools/[filesystem, edit, shell, spawn, subagent, web, cron as cron_tool, message, persona]
 
 type
   ProcessOptions* = object
@@ -62,6 +62,9 @@ proc newAgentLoop*(cfg: Config, msgBus: MessageBus, provider: LLMProvider): Agen
   let sessionsManager = newSessionManager(workspace / "sessions")
   let contextBuilder = newContextBuilder(workspace)
   contextBuilder.setToolsRegistry(toolsRegistry)
+
+  # Register persona management tool (after contextBuilder is created)
+  toolsRegistry.register(newPersonaTool(contextBuilder.personaManager))
 
   var al = AgentLoop(
     bus: msgBus,
@@ -252,7 +255,8 @@ proc runAgentLoop*(al: AgentLoop, opts: ProcessOptions): Future[string] {.async.
   let summary = al.sessions.getSummary(opts.sessionKey)
   var messages: seq[providers_types.Message] = @[]
   try:
-    messages = al.contextBuilder.buildMessages(history, summary, opts.userMessage, opts.channel, opts.chatID)
+    messages = al.contextBuilder.buildMessages(history, summary, opts.userMessage, opts.channel, opts.chatID,
+        opts.sessionKey)
   except CatchableError as e:
     error "Failed to build messages", topic = "agent", error = e.msg
 
@@ -315,7 +319,7 @@ proc processDirect*(al: AgentLoop, content, sessionKey: string,
   let summary = al.sessions.getSummary(sessionKey)
   var messages: seq[providers_types.Message] = @[]
   try:
-    messages = al.contextBuilder.buildMessages(history, summary, content, "cli", "direct")
+    messages = al.contextBuilder.buildMessages(history, summary, content, "cli", "direct", sessionKey)
   except CatchableError as e:
     error "Failed to build messages", topic = "agent", error = e.msg
 
