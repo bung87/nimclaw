@@ -150,7 +150,21 @@ proc listSkills*(sl: SkillsLoader): seq[SkillInfo] =
   result = @[]
   listSkillsFromDir(sl, sl.builtinSkills, "builtin", result)
   listSkillsFromDir(sl, sl.globalSkills, "global", result)
+  # Fallback: npx skills may install symlinks in ~/.config/agents/skills
+  # pointing to ~/.agents/skills, but some skills (e.g. manually installed)
+  # may only exist in ~/.config/agents/skills
+  let configAgentsDir = getHomeDir() / ".config" / "agents" / "skills"
+  if configAgentsDir != sl.globalSkills and dirExists(configAgentsDir):
+    listSkillsFromDir(sl, configAgentsDir, "global", result)
   listSkillsFromDir(sl, sl.workspaceSkills, "workspace", result)
+  # Deduplicate by name (prefer earlier sources)
+  var seen = initTable[string, bool]()
+  var deduped: seq[SkillInfo] = @[]
+  for s in result:
+    if not seen.hasKey(s.name):
+      seen[s.name] = true
+      deduped.add(s)
+  result = deduped
 
 proc loadSkill*(sl: SkillsLoader, name: string): (string, bool) =
   for dir in [sl.workspaceSkills, sl.globalSkills, sl.builtinSkills]:

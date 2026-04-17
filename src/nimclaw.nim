@@ -127,7 +127,7 @@ proc skills(list = false, install = "", remove = "", show = "", create = "",
   let cfg = loadConfig(getConfigPath())
   let workspace = cfg.workspacePath()
   let installer = newSkillInstaller(workspace)
-  let globalSkillsDir = getHomeDir() / ".config" / "agents" / "skills"
+  let globalSkillsDir = getHomeDir() / ".agents" / "skills"
   let builtinSkillsDir = getCurrentDir() / "skills"
   let loader = newSkillsLoader(workspace, globalSkillsDir, builtinSkillsDir)
   let nsMap = loadSkillNamespaces()

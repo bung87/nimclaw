@@ -21,8 +21,8 @@ proc getGlobalConfigDir(): string =
 proc newContextBuilder*(workspace: string): ContextBuilder =
   let wd = getCurrentDir()
   let builtinSkillsDir = wd / "skills"
-  # ~/.config/agents/skills is where npx skills installs symlinks
-  let globalSkillsDir = getHomeDir() / ".config" / "agents" / "skills"
+  # ~/.agents/skills is where npx skills installs canonical copies
+  let globalSkillsDir = getHomeDir() / ".agents" / "skills"
   let pm = persona_manager.newPersonaManager(workspace)
 
   # Migrate legacy personas and ensure default exists
