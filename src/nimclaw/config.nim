@@ -123,6 +123,8 @@ type
     providers*: ProvidersConfig
     gateway*: GatewayConfig
     tools*: ToolsConfig
+    context_strategy*: ContextStrategyConfig
+    memory*: MemoryConfig
 
 proc expandHome*(path: string): string =
   if path == "": return path
@@ -166,6 +168,17 @@ proc defaultConfig*(): Config =
       fallback_order: @["searxng"]
     )
       )
+    ),
+    context_strategy: ContextStrategyConfig(
+      strategy: csSummarizeOld,
+      maxTurns: 40,
+      keepLastNTurns: 10,
+      maxTokens: 16384
+    ),
+    memory: MemoryConfig(
+      enabled: true,
+      maxFacts: 1000,
+      extractFacts: true
     )
   )
 
@@ -181,13 +194,30 @@ proc parseEnv*(cfg: var Config) =
       cfg.tools.web.search.fallback_order.add("exa")
 
 proc loadConfig*(path: string): Config =
-  result = defaultConfig()
+  let defaults = defaultConfig()
+  result = defaults
   if fileExists(path):
     try:
       let data = readFile(path)
-      result = data.fromJson(Config)
-    except:
-      discard # Log error maybe
+      let parsed = data.fromJson(Config)
+      # Merge parsed values, keeping defaults for missing/zero fields
+      if parsed.agents.defaults.workspace != "": result.agents.defaults.workspace = parsed.agents.defaults.workspace
+      if parsed.agents.defaults.model != "": result.agents.defaults.model = parsed.agents.defaults.model
+      if parsed.agents.defaults.provider != "": result.agents.defaults.provider = parsed.agents.defaults.provider
+      if parsed.agents.defaults.max_tokens != 0: result.agents.defaults.max_tokens = parsed.agents.defaults.max_tokens
+      if parsed.agents.defaults.temperature != 0.0: result.agents.defaults.temperature = parsed.agents.defaults.temperature
+      if parsed.agents.defaults.max_tool_iterations != 0: result.agents.defaults.max_tool_iterations = parsed.agents.defaults.max_tool_iterations
+      result.channels = parsed.channels
+      result.providers = parsed.providers
+      if parsed.gateway.host != "": result.gateway.host = parsed.gateway.host
+      if parsed.gateway.port != 0: result.gateway.port = parsed.gateway.port
+      if parsed.tools.web.search.providers.len > 0: result.tools.web.search = parsed.tools.web.search
+      # Context strategy: use parsed only if maxTurns > 0, else keep defaults
+      if parsed.context_strategy.maxTurns > 0: result.context_strategy = parsed.context_strategy
+      # Memory: use parsed if explicitly enabled or has non-zero values
+      if parsed.memory.enabled or parsed.memory.maxFacts > 0: result.memory = parsed.memory
+    except CatchableError:
+      discard
 
   parseEnv(result)
 

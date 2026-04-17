@@ -1,4 +1,4 @@
-import std/[os, strutils]
+import std/[os, strutils, tables]
 
 type
   SkillMetadata* = object
@@ -25,9 +25,108 @@ proc newSkillsLoader*(workspace, globalSkills, builtinSkills: string): SkillsLoa
     builtinSkills: builtinSkills
   )
 
+proc stripFrontmatter(content: string): string =
+  ## Remove YAML frontmatter if present
+  if content.startsWith("---\n"):
+    let nextIdx = content.find("\n---\n", 4)
+    if nextIdx != -1:
+      return content[nextIdx + 5 .. ^1].strip()
+  return content.strip()
+
+proc parseFrontmatter(content: string): Table[string, string] =
+  ## Parse simple YAML frontmatter key: value pairs
+  result = initTable[string, string]()
+  if not content.startsWith("---\n"):
+    return result
+  let endIdx = content.find("\n---\n", 4)
+  if endIdx == -1:
+    return result
+
+  let frontmatter = content[4 ..< endIdx]
+  for line in frontmatter.splitLines():
+    let trimmed = line.strip()
+    if trimmed.len == 0 or trimmed.startsWith("#"):
+      continue
+    let colonPos = trimmed.find(':')
+    if colonPos > 0:
+      let key = trimmed[0 ..< colonPos].strip()
+      var value = trimmed[colonPos + 1 .. ^1].strip()
+      # Remove quotes if present
+      if value.len >= 2 and value[0] == '"' and value[^1] == '"':
+        value = value[1 .. ^2]
+      elif value.len >= 2 and value[0] == '\'' and value[^1] == '\'':
+        value = value[1 .. ^2]
+      result[key] = value
+
+proc extractFirstH1(content: string): string =
+  ## Extract the first Markdown H1 heading
+  for line in content.splitLines():
+    let trimmed = line.strip()
+    if trimmed.startsWith("# "):
+      return trimmed[2 .. ^1].strip()
+  return ""
+
+proc extractFirstParagraph(content: string): string =
+  ## Extract the first non-empty paragraph after frontmatter/headers
+  var inCodeBlock = false
+  var collecting = false
+  var paragraph = ""
+
+  for line in content.splitLines():
+    let trimmed = line.strip()
+    if trimmed.startsWith("```"):
+      inCodeBlock = not inCodeBlock
+      continue
+    if inCodeBlock:
+      continue
+    if trimmed.len == 0:
+      if collecting and paragraph.len > 0:
+        return paragraph.strip()
+      continue
+    if trimmed.startsWith("#"):
+      continue
+    collecting = true
+    if paragraph.len > 0:
+      paragraph.add(" ")
+    paragraph.add(trimmed)
+
+  return paragraph.strip()
+
 proc getSkillMetadata(sl: SkillsLoader, skillPath: string): SkillMetadata =
-  # Minimal implementation for now
-  SkillMetadata(name: lastPathPart(parentDir(skillPath)))
+  let dirName = lastPathPart(parentDir(skillPath))
+  if not fileExists(skillPath):
+    return SkillMetadata(name: dirName, description: "")
+
+  let content = readFile(skillPath)
+  let frontmatter = parseFrontmatter(content)
+
+  var name = dirName
+  var description = ""
+
+  if frontmatter.hasKey("name"):
+    name = frontmatter["name"]
+
+  if frontmatter.hasKey("description"):
+    description = frontmatter["description"]
+  else:
+    let body = stripFrontmatter(content)
+    let firstPara = extractFirstParagraph(body)
+    if firstPara.len > 0:
+      # Limit to first sentence or 200 chars
+      let sentenceEnd = firstPara.find('.')
+      if sentenceEnd > 10:
+        description = firstPara[0 .. sentenceEnd]
+      else:
+        description = firstPara
+      if description.len > 200:
+        description = description[0 .. 199] & "..."
+
+  if name == dirName:
+    let h1 = extractFirstH1(stripFrontmatter(content))
+    if h1.len > 0:
+      name = h1
+
+  SkillMetadata(name: name, description: description)
 
 proc listSkills*(sl: SkillsLoader): seq[SkillInfo] =
   # Minimal implementation
@@ -37,7 +136,13 @@ proc listSkills*(sl: SkillsLoader): seq[SkillInfo] =
       if kind == pcDir:
         let skillFile = path / "SKILL.md"
         if fileExists(skillFile):
-          result.add(SkillInfo(name: lastPathPart(path), path: skillFile, source: "workspace"))
+          let meta = getSkillMetadata(sl, skillFile)
+          result.add(SkillInfo(
+            name: meta.name,
+            path: skillFile,
+            source: "workspace",
+            description: meta.description
+          ))
 
 proc loadSkill*(sl: SkillsLoader, name: string): (string, bool) =
   let skillFile = sl.workspaceSkills / name / "SKILL.md"
@@ -56,14 +161,6 @@ proc loadSkillsForContext*(sl: SkillsLoader, skillNames: seq[string]): string =
 
 proc escapeXML(s: string): string =
   s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-proc stripFrontmatter(content: string): string =
-  # Simple version: if it starts with ---, find next ---
-  if content.startsWith("---\n"):
-    let nextIdx = content.find("\n---\n", 4)
-    if nextIdx != -1:
-      return content[nextIdx + 5 .. ^1]
-  return content
 
 proc buildSkillsSummary*(sl: SkillsLoader): string =
   let skills = sl.listSkills()

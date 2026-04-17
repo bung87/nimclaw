@@ -3,6 +3,8 @@ import std/[os, json, strutils, tables, locks, options, times]
 import ../bus, ../bus_types, ../config, ../logger, ../providers/types as providers_types,
     ../providers/adapters as providers_adapters, ../session, ../utils
 import context as agent_context
+import memory as agent_memory
+import ../persona/manager as persona_manager
 import ../checkpoint/manager as checkpoint_manager
 import ../tools/registry as tools_registry
 import ../tools/base as tools_base
@@ -21,8 +23,10 @@ type
   AgentLoop* = ref object
     bus*: MessageBus
     provider*: LLMProvider
+    cfg*: Config
     workspace*: string
     model*: string
+    temperature*: float64
     contextWindow*: int
     maxIterations*: int
     sessions*: SessionManager
@@ -77,8 +81,10 @@ proc newAgentLoop*(cfg: Config, msgBus: MessageBus, provider: LLMProvider): Agen
   var al = AgentLoop(
     bus: msgBus,
     provider: provider,
+    cfg: cfg,
     workspace: workspace,
     model: cfg.agents.defaults.model,
+    temperature: cfg.agents.defaults.temperature,
     contextWindow: cfg.agents.defaults.max_tokens,
     maxIterations: cfg.agents.defaults.max_tool_iterations,
     sessions: sessionsManager,
@@ -127,9 +133,10 @@ proc summarizeBatch(al: AgentLoop, batch: seq[providers_types.Message], existing
 proc summarizeSession(al: AgentLoop, sessionKey: string) {.async.} =
   let history = al.sessions.getHistory(sessionKey)
   let summary = al.sessions.getSummary(sessionKey)
+  let keepMessages = max(al.cfg.context_strategy.keepLastNTurns * 2, 4)
 
-  if history.len <= 4: return
-  let toSummarize = history[0 .. ^5]
+  if history.len <= keepMessages: return
+  let toSummarize = history[0 .. ^(keepMessages + 1)]
 
   # Oversized Message Guard
   let maxMessageTokens = al.contextWindow div 2
@@ -146,7 +153,7 @@ proc summarizeSession(al: AgentLoop, sessionKey: string) {.async.} =
 
   if finalSummary != "":
     al.sessions.setSummary(sessionKey, finalSummary)
-    al.sessions.truncateHistory(sessionKey, 4)
+    al.sessions.truncateHistory(sessionKey, keepMessages)
     al.sessions.save(al.sessions.getOrCreate(sessionKey))
 
 proc maybeSummarize(al: AgentLoop, sessionKey: string) =
@@ -157,9 +164,28 @@ proc maybeSummarize(al: AgentLoop, sessionKey: string) =
 
   let history = al.sessions.getHistory(sessionKey)
   let tokenEstimate = estimateTokens(history)
-  let threshold = (al.contextWindow * 75) div 100
+  let strategy = al.cfg.context_strategy.strategy
+  let maxTurns = if al.cfg.context_strategy.maxTurns > 0: al.cfg.context_strategy.maxTurns else: 40
+  let keepLastNTurns = if al.cfg.context_strategy.keepLastNTurns > 0: al.cfg.context_strategy.keepLastNTurns else: 10
+  let maxTokens = if al.cfg.context_strategy.maxTokens > 0: al.cfg.context_strategy.maxTokens else: 16384
 
-  if history.len > 20 or tokenEstimate > threshold:
+  var shouldSummarize = false
+
+  case strategy:
+  of csFullHistory:
+    # Only summarize when token budget is exceeded
+    if tokenEstimate > maxTokens:
+      shouldSummarize = true
+  of csLastNTurns:
+    # Truncate history when it exceeds maxTurns
+    if history.len > maxTurns:
+      shouldSummarize = true
+  of csSummarizeOld:
+    # Keep recent turns verbatim, summarize older ones
+    if history.len > maxTurns or tokenEstimate > (maxTokens * 75) div 100:
+      shouldSummarize = true
+
+  if shouldSummarize:
     al.summarizing[sessionKey] = true
     release(al.summarizingLock)
     discard (proc() {.async.} =
@@ -174,6 +200,18 @@ proc maybeSummarize(al: AgentLoop, sessionKey: string) =
 type
   ContentUpdateCallback* = proc(thinking: string, response: string, isDone: bool) {.gcsafe.}
 
+proc getEffectiveModel(al: AgentLoop, sessionKey: string): string =
+  let persona = al.contextBuilder.personaManager.getActivePersona(sessionKey)
+  if persona.metadata.model.len > 0:
+    return persona.metadata.model
+  return al.model
+
+proc getEffectiveTemperature(al: AgentLoop, sessionKey: string): float64 =
+  let persona = al.contextBuilder.personaManager.getActivePersona(sessionKey)
+  if persona.metadata.temperature != 0.0:
+    return persona.metadata.temperature
+  return al.temperature
+
 proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts: ProcessOptions,
     onUpdate: ContentUpdateCallback = nil): Future[(string, int,
     seq[providers_types.Message])] {.async.} =
@@ -182,12 +220,21 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
   var accumulatedReasoning = ""
   var currentMessages = messages
 
+  let effectiveModel = getEffectiveModel(al, opts.sessionKey)
+  let effectiveTemperature = getEffectiveTemperature(al, opts.sessionKey)
+
+  var options = initTable[string, JsonNode]()
+  options["temperature"] = %effectiveTemperature
+  options["max_tokens"] = %al.contextWindow
+
   while iteration < al.maxIterations:
     iteration += 1
-    debug "LLM iteration", topic = "agent", iteration = $iteration, max = $al.maxIterations
+    debug "LLM iteration", topic = "agent", iteration = $iteration, max = $al.maxIterations, model = effectiveModel
 
-    let response = await al.provider.chat(currentMessages, al.tools.getDefinitions(), al.model, initTable[string,
-        JsonNode]())
+    let activePersona = al.contextBuilder.personaManager.getActivePersona(opts.sessionKey)
+    let toolDefinitions = al.tools.getDefinitionsFiltered(activePersona.metadata.enabledTools)
+
+    let response = await al.provider.chat(currentMessages, toolDefinitions, effectiveModel, options)
 
     # Accumulate reasoning across iterations
     if response.reasoning.isSome and response.reasoning.get().len > 0:
@@ -367,6 +414,11 @@ proc runAgentLoop*(al: AgentLoop, opts: ProcessOptions): Future[string] {.async.
   if opts.enableSummary:
     al.maybeSummarize(opts.sessionKey)
 
+  # Auto-extract facts if enabled
+  if al.cfg.memory.extractFacts:
+    let conversation = "User: " & opts.userMessage & "\n\nAssistant: " & resultContent
+    al.contextBuilder.memory.extractAndStoreFacts(conversation, opts.sessionKey)
+
   if opts.sendResponse:
     al.bus.publishOutbound(OutboundMessage(channel: opts.channel, chat_id: opts.chatID, content: resultContent))
 
@@ -438,6 +490,11 @@ proc processDirect*(al: AgentLoop, content, sessionKey: string,
 
   if opts.enableSummary:
     al.maybeSummarize(sessionKey)
+
+  # Auto-extract facts if enabled
+  if al.cfg.memory.extractFacts:
+    let conversation = "User: " & content & "\n\nAssistant: " & responseContent
+    al.contextBuilder.memory.extractAndStoreFacts(conversation, sessionKey)
 
   info "Response", topic = "agent", content = truncate(responseContent, 120), session_key = sessionKey,
       iterations = $iteration

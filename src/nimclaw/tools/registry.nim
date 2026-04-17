@@ -60,6 +60,18 @@ proc getDefinitions*(r: ToolRegistry): seq[ToolDefinition] {.raises: [].} =
   for tool in r.tools.values:
     result.add(toolToSchema(tool))
 
+proc getDefinitionsFiltered*(r: ToolRegistry, allowedNames: seq[string]): seq[ToolDefinition] {.raises: [].} =
+  if allowedNames.len == 0:
+    return getDefinitions(r)
+  acquire(r.lock)
+  defer: release(r.lock)
+  for name in allowedNames:
+    if r.tools.hasKey(name):
+      try:
+        result.add(toolToSchema(r.tools[name]))
+      except KeyError:
+        discard
+
 proc executeWithContext*(r: ToolRegistry, name: string, args: Table[string, JsonNode], channel, chatID: string): Future[
     string] {.async.} =
   info "Tool execution started", topic = "tool", tool = name, args = $args
