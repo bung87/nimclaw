@@ -1,5 +1,5 @@
 import chronos
-import std/[os, strutils, tables, options]
+import std/[os, strutils, tables, options, json, algorithm]
 import cligen
 import nimclaw/[config, logger, bus, agent/loop, providers/factory, tui/core as tui_core]
 import nimclaw/channels/[manager as channel_manager, base as channel_base]
@@ -97,23 +97,98 @@ proc cron(list = false, add = false, remove = "", enable = "", disable = "",
   elif enable != "": discard cs.enableJob(enable, true)
   elif disable != "": discard cs.enableJob(disable, false)
 
+proc loadSkillNamespaces(): Table[string, string] =
+  ## Read npx skills lock file to map skill names to their source repo namespace
+  result = initTable[string, string]()
+  let lockFile = getHomeDir() / ".agents" / ".skill-lock.json"
+  if fileExists(lockFile):
+    try:
+      let data = parseJson(readFile(lockFile))
+      if data.hasKey("skills"):
+        for name, info in data["skills"]:
+          if info.hasKey("source"):
+            let source = info["source"].getStr("")
+            let parts = source.split('/')
+            if parts.len >= 2:
+              # Use repo name as namespace: owner/repo -> repo
+              result[name] = parts[^1]
+            else:
+              result[name] = source
+    except CatchableError:
+      discard
+
+type SkillEntry = object
+  name: string
+  source: string
+  namespace: string
+
 proc skills(list = false, install = "", remove = "", show = "", create = "",
             description = "", from_path = "", verbose = false) =
   let cfg = loadConfig(getConfigPath())
   let workspace = cfg.workspacePath()
   let installer = newSkillInstaller(workspace)
-  let loader = newSkillsLoader(workspace, "", "")
+  let globalSkillsDir = getHomeDir() / ".config" / "agents" / "skills"
+  let builtinSkillsDir = getCurrentDir() / "skills"
+  let loader = newSkillsLoader(workspace, globalSkillsDir, builtinSkillsDir)
+  let nsMap = loadSkillNamespaces()
 
   # Set verbose mode
   installer.verbose = verbose
 
   if list:
-    let installed = installer.listInstalledSkills()
-    if installed.len == 0:
-      echo "No skills installed. Use --install or --create to add skills."
+    let allSkills = loader.listSkills()
+    if allSkills.len == 0:
+      echo "No skills found. Use --install or --create to add skills."
     else:
-      echo "Installed skills:"
-      for s in installed: echo "  ✓ ", s
+      var entries: seq[SkillEntry] = @[]
+      for s in allSkills:
+        var ns = ""
+        if nsMap.hasKey(s.name):
+          ns = nsMap[s.name]
+        entries.add(SkillEntry(name: s.name, source: s.source, namespace: ns))
+
+      # Group by source location, then by repo namespace within each location
+      type LocationGroup = object
+        known: Table[string, seq[string]]
+        unknown: seq[string]
+      var byLocation = initTable[string, LocationGroup]()
+      for e in entries:
+        if not byLocation.hasKey(e.source):
+          byLocation[e.source] = LocationGroup(known: initTable[string, seq[string]](), unknown: @[])
+        if e.namespace != "" and e.namespace != e.source:
+          if not byLocation[e.source].known.hasKey(e.namespace):
+            byLocation[e.source].known[e.namespace] = @[]
+          byLocation[e.source].known[e.namespace].add(e.name)
+        else:
+          byLocation[e.source].unknown.add(e.name)
+
+      for loc in ["builtin", "global", "workspace"]:
+        if not byLocation.hasKey(loc):
+          continue
+        let label = case loc
+          of "builtin": "Project"
+          of "global": "Global"
+          of "workspace": "Workspace"
+          else: loc
+        echo label & ":"
+        let grp = byLocation[loc]
+        # Known repo namespaces
+        var nsList: seq[string] = @[]
+        for ns in grp.known.keys:
+          nsList.add(ns)
+        nsList.sort()
+        for ns in nsList:
+          echo "  " & ns & ":"
+          var names = grp.known[ns]
+          names.sort()
+          for n in names:
+            echo "    ✓ ", n
+        # Unknown / no namespace
+        if grp.unknown.len > 0:
+          var names = grp.unknown
+          names.sort()
+          for n in names:
+            echo "  ✓ ", n
   elif create != "":
     try:
       let path = installer.createSkill(create, description)

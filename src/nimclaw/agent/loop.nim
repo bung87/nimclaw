@@ -212,6 +212,13 @@ proc getEffectiveTemperature(al: AgentLoop, sessionKey: string): float64 =
     return persona.metadata.temperature
   return al.temperature
 
+proc sanitizeToolName(name: string): string =
+  ## Extract leading valid tool name characters before any garbage tokens
+  for i, c in name:
+    if c notin {'a'..'z', 'A'..'Z', '0'..'9', '_'}:
+      return name[0..<i]
+  return name
+
 proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts: ProcessOptions,
     onUpdate: ContentUpdateCallback = nil): Future[(string, int,
     seq[providers_types.Message])] {.async.} =
@@ -297,18 +304,21 @@ proc runLLMIteration(al: AgentLoop, messages: seq[providers_types.Message], opts
 
     var allToolErrors: seq[string] = @[]
     for tc in response.tool_calls:
-      if tc.name == "":
-        warn "Skipping tool call with empty name", topic = "agent", iteration = $iteration
+      var toolName = sanitizeToolName(tc.name)
+      if toolName == "":
+        warn "Skipping tool call with empty or invalid name", topic = "agent", iteration = $iteration, raw = tc.name
         continue
-      info "Tool call", topic = "agent", name = tc.name, iteration = $iteration
-      let toolResult = await al.tools.executeWithContext(tc.name, tc.arguments, opts.channel, opts.chatID)
+      if toolName != tc.name:
+        warn "Sanitized tool name", topic = "agent", raw = tc.name, sanitized = toolName
+      info "Tool call", topic = "agent", name = toolName, iteration = $iteration
+      let toolResult = await al.tools.executeWithContext(toolName, tc.arguments, opts.channel, opts.chatID)
       if toolResult.startsWith("Error: "):
-        allToolErrors.add(tc.name & ": " & toolResult)
+        allToolErrors.add(toolName & ": " & toolResult)
       let toolResultMsg = providers_types.Message(
         role: mrTool,
         content: some(toolResult),
         toolCallId: some(tc.id),
-        name: some(tc.name)
+        name: some(toolName)
       )
       currentMessages.add(toolResultMsg)
       al.sessions.addFullMessage(opts.sessionKey, toolResultMsg)

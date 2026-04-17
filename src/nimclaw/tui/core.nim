@@ -5,6 +5,7 @@ import chronos
 import ../providers/types as providers_types
 import ../agent/loop
 import ../config
+import ../logger
 import ../persona/manager as persona_manager
 import ../session
 import markdown_rendering
@@ -789,7 +790,12 @@ proc sendMessage(app: TuiApp) {.async.} =
       if assistantMsgIdx < app.messages.len:
         app.handleStreamingUpdate(assistantMsgIdx, thinking, response, isDone)
 
-  let response = await app.agentLoop.processDirect(userInput, app.sessionKey, onUpdate)
+  var response = ""
+  try:
+    response = await app.agentLoop.processDirect(userInput, app.sessionKey, onUpdate)
+  except CatchableError as e:
+    error "processDirect failed", topic = "tui", error = e.msg, session = app.sessionKey
+    response = "Error: " & e.msg
 
   # Ensure final content is set
   if assistantMsgIdx < app.messages.len:

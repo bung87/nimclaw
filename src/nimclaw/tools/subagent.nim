@@ -3,6 +3,7 @@ import std/[tables, locks, times, json, strutils, options]
 import ../providers/types as providers_types
 import ../bus
 import ../bus_types
+import ../logger
 
 type
   SubagentTask* = ref object
@@ -63,12 +64,15 @@ proc runTask*(sm: SubagentManager, task: SubagentTask) {.async.} =
 
   if sm.bus != nil:
     let announceContent = strutils.format("Task '$1' completed.\n\nResult:\n$2", task.label, task.result)
-    sm.bus.publishInbound(InboundMessage(
-      channel: "system",
-      sender_id: "subagent:" & task.id,
-      chat_id: task.originChannel & ":" & task.originChatID,
-      content: announceContent
-    ))
+    try:
+      sm.bus.publishInbound(InboundMessage(
+        channel: "system",
+        sender_id: "subagent:" & task.id,
+        chat_id: task.originChannel & ":" & task.originChatID,
+        content: announceContent
+      ))
+    except CatchableError as e:
+      warn "Failed to publish subagent result", topic = "subagent", task = task.id, error = e.msg
 
 proc spawn*(sm: SubagentManager, task, label, originChannel, originChatID: string): string =
   acquire(sm.lock)

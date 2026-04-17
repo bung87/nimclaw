@@ -102,9 +102,11 @@ proc getSkillMetadata(sl: SkillsLoader, skillPath: string): SkillMetadata =
 
   var name = dirName
   var description = ""
+  var nameFromFrontmatter = false
 
   if frontmatter.hasKey("name"):
     name = frontmatter["name"]
+    nameFromFrontmatter = true
 
   if frontmatter.hasKey("description"):
     description = frontmatter["description"]
@@ -121,33 +123,41 @@ proc getSkillMetadata(sl: SkillsLoader, skillPath: string): SkillMetadata =
       if description.len > 200:
         description = description[0 .. 199] & "..."
 
-  if name == dirName:
+  # Only fall back to H1 if no explicit frontmatter name was provided
+  if not nameFromFrontmatter and name == dirName:
     let h1 = extractFirstH1(stripFrontmatter(content))
     if h1.len > 0:
       name = h1
 
   SkillMetadata(name: name, description: description)
 
+proc listSkillsFromDir(sl: SkillsLoader, dir, sourceLabel: string, result: var seq[SkillInfo]) =
+  if not dirExists(dir):
+    return
+  for kind, path in walkDir(dir):
+    if kind == pcDir or kind == pcLinkToDir:
+      let skillFile = path / "SKILL.md"
+      if fileExists(skillFile):
+        let meta = getSkillMetadata(sl, skillFile)
+        result.add(SkillInfo(
+          name: meta.name,
+          path: skillFile,
+          source: sourceLabel,
+          description: meta.description
+        ))
+
 proc listSkills*(sl: SkillsLoader): seq[SkillInfo] =
-  # Minimal implementation
   result = @[]
-  if dirExists(sl.workspaceSkills):
-    for kind, path in walkDir(sl.workspaceSkills):
-      if kind == pcDir:
-        let skillFile = path / "SKILL.md"
-        if fileExists(skillFile):
-          let meta = getSkillMetadata(sl, skillFile)
-          result.add(SkillInfo(
-            name: meta.name,
-            path: skillFile,
-            source: "workspace",
-            description: meta.description
-          ))
+  listSkillsFromDir(sl, sl.builtinSkills, "builtin", result)
+  listSkillsFromDir(sl, sl.globalSkills, "global", result)
+  listSkillsFromDir(sl, sl.workspaceSkills, "workspace", result)
 
 proc loadSkill*(sl: SkillsLoader, name: string): (string, bool) =
-  let skillFile = sl.workspaceSkills / name / "SKILL.md"
-  if fileExists(skillFile):
-    return (readFile(skillFile), true)
+  for dir in [sl.workspaceSkills, sl.globalSkills, sl.builtinSkills]:
+    if dir == "": continue
+    let skillFile = dir / name / "SKILL.md"
+    if fileExists(skillFile):
+      return (readFile(skillFile), true)
   return ("", false)
 
 proc loadSkillsForContext*(sl: SkillsLoader, skillNames: seq[string]): string =
